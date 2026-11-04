@@ -17,7 +17,11 @@ export function toast(message: string, kind: 'ok' | 'warn' | 'error' | 'info' = 
     b.onclick = () => { action.run(); el.remove(); };
     el.append(b);
   }
+  // The same message twice in a row just refreshes; at most three notices on screen.
+  const last = box.lastElementChild as HTMLElement | null;
+  if (last && last.firstChild?.textContent === message && !action) last.remove();
   box.append(el);
+  while (box.children.length > 3) box.firstElementChild!.remove();
   if (ms > 0) setTimeout(() => el.remove(), ms);
   return el;
 }

@@ -10,6 +10,7 @@ import type { Project } from './types';
 import { renderFrame } from './render';
 import { prepareAll } from './prepare';
 import { schedule } from './timeline';
+import { audioClips, sceneCaptions } from './scenes';
 import type { CustomHand } from './hand';
 import { resolveUrl } from '../storage/db';
 
@@ -39,10 +40,11 @@ export const bitrate = (w: number, h: number, fps: number) => Math.round(w * h *
 export async function planExport(p: Project, format: ExportFormat): Promise<{ method: ExportMethod; silent: boolean }> {
   if (format === 'gif') return { method: 'gif', silent: true };
   const fastVideo = typeof VideoEncoder !== 'undefined' && typeof VideoFrame !== 'undefined';
-  const fastAudio = !p.audio || (typeof AudioEncoder !== 'undefined' && !!(await pickAudioCodec(format, 48000, 2)));
+  const hasSound = audioClips(p).length > 0;
+  const fastAudio = !hasSound || (typeof AudioEncoder !== 'undefined' && !!(await pickAudioCodec(format, 48000, 2)));
   if (fastVideo && fastAudio) return { method: 'webcodecs', silent: false };
   if (canRecord()) return { method: 'realtime', silent: false };
-  if (fastVideo) return { method: 'webcodecs', silent: !!p.audio };
+  if (fastVideo) return { method: 'webcodecs', silent: hasSound };
   throw new Error('This browser cannot make videos. Export a GIF, or update the browser.');
 }
 
@@ -81,17 +83,25 @@ async function pickAudioCodec(fmt: string, sampleRate: number, channels: number)
   return null;
 }
 
-async function decodeAudio(src: string, duration: number, volume: number, sampleRate = 48000): Promise<AudioBuffer> {
-  const bytes = await (await fetch(await resolveUrl(src))).arrayBuffer();
-  const tmp = new OfflineAudioContext(2, 1, sampleRate);
-  const decoded = await tmp.decodeAudioData(bytes);
+/**
+ * Mix every clip (background track + each scene's voice, at its start time) into one
+ * stereo buffer as long as the video.
+ */
+export async function renderMix(p: Project, duration: number, sampleRate = 48000): Promise<AudioBuffer | null> {
+  const clips = audioClips(p);
+  if (!clips.length) return null;
   const ctx = new OfflineAudioContext(2, Math.max(1, Math.ceil(duration * sampleRate)), sampleRate);
-  const node = ctx.createBufferSource();
-  node.buffer = decoded;
-  const gain = ctx.createGain();
-  gain.gain.value = volume;
-  node.connect(gain).connect(ctx.destination);
-  node.start();
+  for (const c of clips) {
+    if (c.start >= duration) continue;
+    const bytes = await (await fetch(await resolveUrl(c.src))).arrayBuffer();
+    const decoded = await ctx.decodeAudioData(bytes);
+    const node = ctx.createBufferSource();
+    node.buffer = decoded;
+    const gain = ctx.createGain();
+    gain.gain.value = c.volume;
+    node.connect(gain).connect(ctx.destination);
+    node.start(c.start);
+  }
   return ctx.startRendering();
 }
 
@@ -107,8 +117,9 @@ async function exportWebCodecs(p: Project, o: ExportOptions, dropAudio: boolean)
   const { config, muxCodec } = video;
 
   const sampleRate = 48000;
-  const audioCodec = p.audio && !dropAudio ? await pickAudioCodec(fmt, sampleRate, 2) : null;
-  const audioBuf = p.audio && audioCodec ? await decodeAudio(p.audio.src, sched.total, p.audio.volume, sampleRate) : null;
+  const hasSound = audioClips(p, sched).length > 0;
+  const audioCodec = hasSound && !dropAudio ? await pickAudioCodec(fmt, sampleRate, 2) : null;
+  const audioBuf = audioCodec ? await renderMix(p, sched.total, sampleRate) : null;
 
   const muxer: { addVideoChunk: (c: EncodedVideoChunk, m?: EncodedVideoChunkMetadata) => void; addAudioChunk: (c: EncodedAudioChunk, m?: EncodedAudioChunkMetadata) => void; finalize: () => void; target: { buffer: ArrayBuffer } } =
     fmt === 'mp4'
@@ -201,10 +212,11 @@ async function exportRealtime(p: Project, o: ExportOptions): Promise<ExportResul
   const ownCtx = !o.audioContext;
   let ac: AudioContext | null = o.audioContext ?? null;
   let src: AudioBufferSourceNode | null = null;
-  if (p.audio) {
+  const hasSound = audioClips(p, sched).length > 0;
+  if (hasSound) {
     ac ??= new AudioContext();
     await ac.resume();
-    const buf = await decodeAudio(p.audio.src, total, p.audio.volume, ac.sampleRate);
+    const buf = (await renderMix(p, total, ac.sampleRate))!;
     const dest = ac.createMediaStreamDestination();
     src = ac.createBufferSource();
     src.buffer = buf;
@@ -241,7 +253,7 @@ async function exportRealtime(p: Project, o: ExportOptions): Promise<ExportResul
   const type = (rec.mimeType || mimeType || 'video/webm').split(';')[0];
   return {
     blob: new Blob(chunks, { type }), mime: type, ext: type.includes('mp4') ? 'mp4' : 'webm',
-    frames: Math.round(total * o.fps), withAudio: !!p.audio, codec: rec.mimeType || type, method: 'realtime',
+    frames: Math.round(total * o.fps), withAudio: hasSound, codec: rec.mimeType || type, method: 'realtime',
   };
 }
 
@@ -269,15 +281,9 @@ async function exportGif(p: Project, o: ExportOptions): Promise<ExportResult> {
   return { blob: new Blob([gif.bytes()], { type: 'image/gif' }), mime: 'image/gif', ext: 'gif', frames, withAudio: false, codec: 'gif', method: 'gif' };
 }
 
-/** Subtitles from text elements: each caption shows from when it starts being written until the next one. */
+/** Subtitles (.srt): one caption per scene narration, or per on-screen text when there is no narration. */
 export function exportSrt(p: Project): string {
-  const s = schedule(p);
-  const cues: { a: number; b: number; text: string }[] = [];
-  p.elements.forEach((el, i) => {
-    if (el.kind !== 'text' || !el.text.trim()) return;
-    cues.push({ a: s.slots[i].revealStart, b: s.total, text: el.text.trim() });
-  });
-  for (let i = 0; i < cues.length - 1; i++) cues[i].b = cues[i + 1].a;
+  const cues = sceneCaptions(p, schedule(p));
   const ts = (x: number) => {
     const ms = Math.round(x * 1000);
     const pad = (n: number, l = 2) => String(n).padStart(l, '0');

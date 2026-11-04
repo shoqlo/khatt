@@ -69,9 +69,13 @@ for (const [ars, ens] of pairs) {
     for (const e of ens) m.set(e, (m.get(e) ?? 0) + 1);
   }
 }
+// Precision over coverage: keep a word only if it occurs in 2+ emoji names, or is an emoji's
+// whole name (e.g. "قطة" = cat). One-off words (often adjectives like "طويلة") mistranslate.
+const wholeNames = new Set(pairs.filter(([ars]) => ars.length).map(([ars]) => ars[0]));
 const dict = {};
 for (const [a, m] of co) {
   const n = df.get(a);
+  if (n < 2 && !wholeNames.has(a)) continue;
   const ranked = [...m.entries()].filter(([, c]) => c / n >= 0.5).sort((x, y) => y[1] - x[1] || x[0].length - y[0].length);
   if (ranked.length) dict[a] = ranked.slice(0, 3).map(([e]) => e).join(' ');
 }

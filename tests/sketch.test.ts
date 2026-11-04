@@ -26,3 +26,19 @@ describe('raster sketch', () => {
     expect(ltr[0].x).toBeLessThan(50);
   });
 });
+
+describe('glyph contour flattening', () => {
+  it('measures straight and curved contours like the browser would', async () => {
+    const { flattenGlyphContour, resample } = await import('../src/engine/prepare');
+    const sq = flattenGlyphContour('M0,0L100,0L100,100L0,100Z');
+    expect(sq.length).toBeCloseTo(400, 6);
+    const pts = resample(sq, 25, 40);
+    expect(pts.length).toBe(16);
+    expect(pts[0]).toEqual({ x: 0, y: 0 });
+    expect(pts[pts.length - 1].x).toBeCloseTo(0, 6);
+    // quarter circle-ish quadratic: length between chord (141.4) and control polygon (200)
+    const q = flattenGlyphContour('M0,0Q100,0 100,100');
+    expect(q.length).toBeGreaterThan(141.4);
+    expect(q.length).toBeLessThan(200);
+  });
+});

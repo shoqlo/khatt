@@ -8,6 +8,9 @@ import { listProjects, getProject, deleteProject, exportProjectFile, importProje
 import { loadLibrary } from '../library/builtin';
 import { projectCredits } from '../library/credits';
 import { ui } from './app';
+import { openWizard } from './wizard';
+import { openSceneRecorder } from './recorder';
+import { FRAMES } from '../engine/types';
 
 function dialog(...children: (Node | false | null | undefined)[]) {
   const dlg = h('dialog', { class: 'dialog' });
@@ -47,7 +50,9 @@ export function openMenu() {
   projectFileInput();
   dlg = dialog(
     h('h3', {}, t('menu')),
+    item(`✨ ${t('fromScript')}`, openWizard, 'accent'),
     item(t('new'), () => { loadProject(newProject(t('untitled'))); commit(); }),
+    item(`🎙 ${t('recordAll')}`, () => openSceneRecorder(state.project.scenes[0].id, true)),
     item(t('projects'), openProjects),
     item(t('saveFile'), async () => download(await exportProjectFile(state.project), `${state.project.title || 'khatt'}.khatt`)),
     item(t('openFile'), () => projectFileInput().click()),
@@ -132,7 +137,11 @@ export async function openExport() {
       audioContext?.resume();
       abort = new AbortController();
       startBtn.disabled = true; out.replaceChildren(); msg.textContent = `${t('exporting')} ${t('keepOpen')}`; bar.value = 0;
-      const [w, hh] = res === '1080' ? [1920, 1080] : res === '720' ? [1280, 720] : [854, 480];
+      // Size follows the video shape: e.g. 1080p vertical = 1080x1920.
+      const f = FRAMES[state.project.aspect];
+      const short = res === '1080' ? 1080 : res === '720' ? 720 : 480;
+      const k = short / Math.min(f.w, f.h);
+      const [w, hh] = [Math.round((f.w * k) / 2) * 2, Math.round((f.h * k) / 2) * 2];
       const lock = await (navigator as { wakeLock?: { request: (k: 'screen') => Promise<{ release: () => Promise<void> }> } }).wakeLock?.request('screen').catch(() => null);
       const t0 = performance.now();
       try {

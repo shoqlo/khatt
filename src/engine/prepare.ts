@@ -85,8 +85,12 @@ function measureHost(): SVGSVGElement {
   return host;
 }
 
-function sample(geom: SVGGeometryElement, length: number): Pt[] {
-  const n = Math.max(2, Math.min(240, Math.ceil(length / 3)));
+/**
+ * Points along a stroke for the hand to follow. getPointAtLength is slow on long paths,
+ * so sample as coarsely as the hand allows: `step` is in the path's own units.
+ */
+function sample(geom: SVGGeometryElement, length: number, step = 3, cap = 120): Pt[] {
+  const n = Math.max(2, Math.min(cap, Math.ceil(length / step)));
   const out: Pt[] = [];
   for (let i = 0; i < n; i++) {
     const p = geom.getPointAtLength((length * i) / (n - 1));
@@ -207,35 +211,78 @@ function orderStrokes(strokes: Stroke[], dir: 'ltr' | 'rtl') {
 async function prepareText(el: TextElement): Promise<PreparedVector> {
   const f = await getFont(el.font);
   const layout = layoutText(f.hb, f.font, f.upem, el.text || ' ', el.size, el.align);
-  const root = measureHost();
-  const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-  root.appendChild(path);
   const strokes: Stroke[] = [];
   const outlineWidth = Math.max(1, el.size / 45);
-  try {
-    for (const g of layout.glyphs) {
-      // Font units are y-up; flip into layout space.
-      const m = new DOMMatrix([g.scale, 0, 0, -g.scale, g.x, g.y]);
-      // Split a glyph into its closed contours so the pen lifts between them.
-      const contours = g.d.split(/(?=M)/).filter((c) => c.length > 2);
-      const whole = new Path2D(g.d);
-      const firstOfGlyph = strokes.length;
-      for (const c of contours) {
-        path.setAttribute('d', c);
-        const length = path.getTotalLength();
-        if (!(length > 0)) continue;
-        const samples = sample(path, length).map((p) => { const q = m.transformPoint(p); return { x: q.x, y: q.y }; });
-        strokes.push({
-          path: new Path2D(c), matrix: m, length, stroke: null, fill: el.color, fillPath: null,
-          width: outlineWidth / g.scale, samples, cap: 'round', join: 'round',
-        });
-      }
-      if (strokes.length > firstOfGlyph) strokes[strokes.length - 1].fillPath = whole;
+  for (const g of layout.glyphs) {
+    // Font units are y-up; flip into layout space.
+    const m = new DOMMatrix([g.scale, 0, 0, -g.scale, g.x, g.y]);
+    // Split a glyph into its closed contours so the pen lifts between them.
+    const contours = g.d.split(/(?=M)/).filter((c) => c.length > 2);
+    const whole = new Path2D(g.d);
+    const firstOfGlyph = strokes.length;
+    for (const c of contours) {
+      const flat = flattenGlyphContour(c);
+      if (!(flat.length > 0)) continue;
+      const samples = resample(flat, 25, 40).map((p) => { const q = m.transformPoint(p); return { x: q.x, y: q.y }; });
+      strokes.push({
+        path: new Path2D(c), matrix: m, length: flat.length, stroke: null, fill: el.color, fillPath: null,
+        width: outlineWidth / g.scale, samples, cap: 'round', join: 'round',
+      });
     }
-  } finally {
-    path.remove();
+    if (strokes.length > firstOfGlyph) strokes[strokes.length - 1].fillPath = whole;
   }
   return { kind: 'vector', w: layout.width, h: layout.height, strokes, total: strokes.reduce((a, s) => a + s.length, 0) };
+}
+
+// ---------------- glyph contour flattening (pure, unit-tested) ----------------
+// HarfBuzz outlines use only absolute M/L/Q/C/Z, so they can be walked in one pass
+// instead of hundreds of slow getPointAtLength() calls.
+export interface Flat { pts: Pt[]; cum: number[]; length: number }
+
+export function flattenGlyphContour(d: string): Flat {
+  const nums = (s: string) => s.trim().split(/[\s,]+/).filter(Boolean).map(Number);
+  const pts: Pt[] = [];
+  let cur: Pt = { x: 0, y: 0 }, start: Pt = { x: 0, y: 0 };
+  for (const m of d.matchAll(/([MLQCZ])([^MLQCZ]*)/gi)) {
+    const cmd = m[1].toUpperCase(), a = nums(m[2]);
+    if (cmd === 'M') { cur = { x: a[0], y: a[1] }; start = cur; pts.push(cur); }
+    else if (cmd === 'L') { for (let i = 0; i + 1 < a.length; i += 2) { cur = { x: a[i], y: a[i + 1] }; pts.push(cur); } }
+    else if (cmd === 'Q') {
+      for (let i = 0; i + 3 < a.length; i += 4) {
+        const p0 = cur, c = { x: a[i], y: a[i + 1] }, p1 = { x: a[i + 2], y: a[i + 3] };
+        for (let k = 1; k <= 8; k++) { const t = k / 8, u = 1 - t; pts.push({ x: u * u * p0.x + 2 * u * t * c.x + t * t * p1.x, y: u * u * p0.y + 2 * u * t * c.y + t * t * p1.y }); }
+        cur = p1;
+      }
+    } else if (cmd === 'C') {
+      for (let i = 0; i + 5 < a.length; i += 6) {
+        const p0 = cur, c1 = { x: a[i], y: a[i + 1] }, c2 = { x: a[i + 2], y: a[i + 3] }, p1 = { x: a[i + 4], y: a[i + 5] };
+        for (let k = 1; k <= 12; k++) {
+          const t = k / 12, u = 1 - t;
+          pts.push({ x: u * u * u * p0.x + 3 * u * u * t * c1.x + 3 * u * t * t * c2.x + t * t * t * p1.x, y: u * u * u * p0.y + 3 * u * u * t * c1.y + 3 * u * t * t * c2.y + t * t * t * p1.y });
+        }
+        cur = p1;
+      }
+    } else if (cmd === 'Z') { cur = start; pts.push(start); }
+  }
+  const cum = [0];
+  for (let i = 1; i < pts.length; i++) cum.push(cum[i - 1] + Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y));
+  return { pts, cum, length: cum[cum.length - 1] ?? 0 };
+}
+
+/** Evenly spaced points along a flattened contour (every `step` units, at most `cap`). */
+export function resample(f: Flat, step: number, cap: number): Pt[] {
+  const n = Math.max(2, Math.min(cap, Math.ceil(f.length / step)));
+  const out: Pt[] = [];
+  let j = 1;
+  for (let i = 0; i < n; i++) {
+    const target = (f.length * i) / (n - 1);
+    while (j < f.cum.length - 1 && f.cum[j] < target) j++;
+    const a = f.pts[j - 1], b = f.pts[j] ?? a;
+    const seg = f.cum[j] - f.cum[j - 1] || 1;
+    const k = Math.min(1, Math.max(0, (target - f.cum[j - 1]) / seg));
+    out.push({ x: a.x + (b.x - a.x) * k, y: a.y + (b.y - a.y) * k });
+  }
+  return out;
 }
 
 async function loadImage(src: string): Promise<HTMLImageElement> {

@@ -1,5 +1,7 @@
 // The "Add" panel: bundled drawings, open-image search, text, own photos, sound.
-import { state, ui, commit, softCommit, afterLoad, addSvg, addImageBlob, addText, audioEl } from './app';
+import { state, ui, commit, softCommit, afterLoad, addSvg, addImageBlob, addText } from './app';
+import { startRecording, blobDuration, unlockAudio, type Recording } from './sound';
+import { openSceneRecorder } from './recorder';
 import { h, field, num, range, select, add } from './dom';
 import { t, getLang, type Key } from './i18n';
 import { toast } from './toast';
@@ -22,6 +24,10 @@ export function renderTabs() {
   }, t(k))));
   const body = document.getElementById('library')!;
   body.replaceChildren();
+  if (state.replaceTarget) {
+    body.append(h('div', { class: 'callout replace-banner' }, `⇄ ${t('replacing')} `,
+      h('button', { onclick: () => { state.replaceTarget = null; document.body.classList.remove('replacing'); renderTabs(); } }, t('cancel'))));
+  }
   if (state.tab === 'icons') drawingsTab(body);
   if (state.tab === 'online') onlineTab(body);
   if (state.tab === 'text') textTab(body);
@@ -212,8 +218,10 @@ function uploadTab(body: HTMLElement) {
     h('label', { for: 'photo-input', class: 'button primary wide' }, t('chooseFile')));
 }
 
-// ---------------- sound ----------------
-let recorder: MediaRecorder | null = null;
+// ---------------- sound (whole video) ----------------
+// Per-scene voices live on each scene (tap the scene in the strip under the board).
+// This tab is for background music, or one recording that covers the whole video.
+let recording: Recording | null = null;
 function audioTab(body: HTMLElement) {
   const a = state.project.audio;
   const input = h('input', { type: 'file', accept: 'audio/*', id: 'audio-input', class: 'visually-hidden' }) as HTMLInputElement;
@@ -223,31 +231,30 @@ function audioTab(body: HTMLElement) {
     input.value = '';
   });
   const rec = h('button', {
-    class: recorder ? 'danger wide' : 'wide',
+    class: recording ? 'danger wide' : 'wide',
     onclick: async () => {
-      if (recorder) { recorder.stop(); return; }
+      unlockAudio();
+      if (recording) {
+        const r = recording;
+        recording = null;
+        await setAudio(await r.stop(), t('record'));
+        return;
+      }
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        const chunks: Blob[] = [];
-        recorder = new MediaRecorder(stream);
-        recorder.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
-        recorder.onstop = async () => {
-          stream.getTracks().forEach((tr) => tr.stop());
-          const type = (recorder?.mimeType || chunks[0]?.type || 'audio/webm').split(';')[0];
-          recorder = null;
-          await setAudio(new Blob(chunks, { type }), t('record'));
-          renderTabs();
-        };
-        recorder.start(250);
+        recording = await startRecording();
+        recording.begin();
         renderTabs();
-      } catch (err) { toast((err as Error).message, 'error'); }
+      } catch (err) { toast(`${t('micPermission')} (${(err as Error).message})`, 'error'); }
     },
-  }, recorder ? `■ ${t('stop')}` : `● ${t('record')}`);
+  }, recording ? `■ ${t('stop')}` : `● ${t('record')}`);
   add(body,
-    h('h3', {}, t('voice')),
-    recorder ? h('div', { class: 'note recording' }, t('recording')) : a ? h('div', { class: 'note' }, `${a.name} — ${a.duration.toFixed(1)}s`) : h('div', { class: 'note' }, t('noAudio')),
+    h('div', { class: 'callout' },
+      h('div', {}, `🎙 ${t('perSceneHint')}`),
+      h('button', { class: 'primary wide', onclick: () => { ui.closeSheetOnPhone(); openSceneRecorder(state.project.scenes[0].id, true); } }, t('recordAll'))),
+    h('h3', {}, t('backgroundMusic')),
+    recording ? h('div', { class: 'note recording' }, t('recording')) : a ? h('div', { class: 'note' }, `${a.name} — ${a.duration.toFixed(1)}s`) : h('div', { class: 'note' }, t('noAudio')),
     input, h('div', { class: 'row' }, h('label', { for: 'audio-input', class: 'button wide' }, t('chooseAudio')), rec),
-    a && field(t('volume'), range(a.volume, (v) => { a.volume = v; audioEl.volume = v; softCommit(); }, 0, 1, 0.05)),
+    a && field(t('volume'), range(a.volume, (v) => { a.volume = v; softCommit(); }, 0, 1, 0.05)),
     a && h('button', { class: 'primary wide', onclick: () => { state.project = fitToDuration(state.project, a.duration); commit(); } }, t('fitAudio')),
     a && h('button', { class: 'wide', onclick: () => { state.project.audio = null; afterLoad(); commit(); renderTabs(); } }, t('remove')),
   );
@@ -255,13 +262,10 @@ function audioTab(body: HTMLElement) {
 
 async function setAudio(blob: Blob, name: string) {
   try {
-    // decodeAudioData works for every format the browser can play, and gives an exact duration
-    // (MediaRecorder files often have no duration header).
-    const ctx = new (window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext)();
-    const buf = await ctx.decodeAudioData(await blob.arrayBuffer());
-    ctx.close();
+    // Decoding gives an exact duration (recorded files often have no duration header).
+    const duration = await blobDuration(blob);
     const src = await putAsset(blob, name);
-    state.project.audio = { src, name, duration: buf.duration, volume: 1 };
+    state.project.audio = { src, name, duration, volume: 1 };
     afterLoad();
     commit();
     renderTabs();

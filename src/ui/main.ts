@@ -1,11 +1,14 @@
 import './styles.css';
-import { newProject, type Camera, type Project } from '../engine/types';
+import { newProject, frameOf, type Camera, type Project } from '../engine/types';
 import { renderFrame, boundsOf, viewMatrix, elementSize } from '../engine/render';
-import { schedule, FULL_BOARD, activeIndex, autoCamera } from '../engine/timeline';
+import { schedule, fullView, zoomLimits, activeIndex, autoCamera } from '../engine/timeline';
+import { sceneSpans } from '../engine/scenes';
 import { prepareAll } from '../engine/prepare';
 import { exportVideo } from '../engine/export';
 import { getProject, listProjects } from '../storage/db';
-import { state, ui, commit, undo, redo, loadProject, findEl, removeEl, audioEl, isPhone } from './app';
+import { state, ui, commit, undo, redo, loadProject, findEl, removeEl, isPhone, addScene } from './app';
+import { startPlayback, stopPlayback, playbackTime, unlockAudio } from './sound';
+import { openWizard } from './wizard';
 import { renderTabs } from './panels';
 import { renderProps } from './props';
 import { openMenu, openExport, openProjects } from './dialogs';
@@ -21,11 +24,13 @@ const ctx = canvas.getContext('2d')!;
 type Sheet = '' | 'add' | 'edit';
 function setSheet(s: Sheet) {
   document.body.dataset.sheet = s;
+  if (s !== 'add' && state.replaceTarget) { state.replaceTarget = null; document.body.classList.remove('replacing'); }
   renderBottomBar();
   requestAnimationFrame(requestDraw);
 }
 const sheet = () => (document.body.dataset.sheet ?? '') as Sheet;
 ui.closeSheetOnPhone = () => { if (isPhone()) setSheet(''); };
+ui.openSheet = (s) => setSheet(s);
 
 // ---------------- drawing & playback ----------------
 let drawQueued = false;
@@ -35,9 +40,27 @@ function requestDraw() {
   requestAnimationFrame(() => { drawQueued = false; draw(); });
 }
 
+let lastStageH = 0;
+/** Size the board to the space available while keeping the video's exact shape. */
+function sizeStage() {
+  const f = frameOf(state.project);
+  document.body.dataset.aspect = state.project.aspect;
+  const wrap = $('stage-wrap');
+  const availW = wrap.clientWidth;
+  // On phones the board sits above the panels: cap its height so a vertical video doesn't fill the screen.
+  const availH = isPhone() ? window.innerHeight * (state.project.aspect === 'portrait' ? 0.5 : 0.42) : wrap.clientHeight;
+  if (!availW || !availH) return;
+  const k = Math.min(availW / f.w, availH / f.h);
+  const w = `${Math.floor(f.w * k)}px`, hh = `${Math.floor(f.h * k)}px`;
+  if (canvas.style.width !== w) canvas.style.width = w;
+  if (canvas.style.height !== hh) canvas.style.height = hh;
+}
+
 function draw() {
+  sizeStage();
   const r = canvas.getBoundingClientRect();
   if (!r.width) return;
+  if (Math.abs(r.height - lastStageH) > 1) { lastStageH = r.height; document.documentElement.style.setProperty('--stage-h', `${Math.round(r.height)}px`); }
   const dpr = Math.min(2, window.devicePixelRatio || 1);
   const w = Math.max(2, Math.round(r.width * dpr)), hh = Math.max(2, Math.round(r.height * dpr));
   if (canvas.width !== w || canvas.height !== hh) { canvas.width = w; canvas.height = hh; }
@@ -57,8 +80,9 @@ function tick(now: number) {
   const dt = (now - lastTick) / 1000;
   lastTick = now;
   const total = schedule(state.project).total;
-  // While the voice-over plays it is the master clock, so drawing stays in sync with it.
-  if (state.project.audio && !audioEl.paused && audioEl.currentTime > 0 && audioEl.currentTime < audioEl.duration) state.time = audioEl.currentTime;
+  // While sound plays it is the master clock, so drawing stays in sync with every voice.
+  const clock = playbackTime();
+  if (clock != null) state.time = clock;
   else state.time += dt;
   if (state.time >= total) { state.time = total; stop(); }
   draw();
@@ -66,16 +90,13 @@ function tick(now: number) {
 }
 
 async function play(from?: number) {
+  unlockAudio(); // must happen inside the tap, before any await
   if (isPhone()) setSheet('');
   await prepareAll(state.project.elements);
   const total = schedule(state.project).total;
   state.time = from ?? (state.time >= total - 0.05 ? 0 : state.time);
   state.playing = true;
-  if (state.project.audio) {
-    audioEl.volume = state.project.audio.volume;
-    audioEl.currentTime = state.time;
-    audioEl.play().catch(() => { /* autoplay blocked; visuals still run */ });
-  }
+  await startPlayback(state.project, state.time).catch(() => false);
   lastTick = performance.now();
   requestAnimationFrame(tick);
   renderTransport(); renderBottomBar();
@@ -83,7 +104,7 @@ async function play(from?: number) {
 
 function stop() {
   state.playing = false;
-  audioEl.pause();
+  stopPlayback();
   renderTransport(); renderBottomBar();
   requestDraw();
 }
@@ -92,7 +113,7 @@ function stop() {
 function toWorld(px: number, py: number, cam: Camera = state.view) {
   const r = canvas.getBoundingClientRect();
   const dpr = canvas.width / r.width;
-  return viewMatrix(cam, canvas.width, canvas.height).inverse().transformPoint({ x: (px - r.left) * dpr, y: (py - r.top) * dpr });
+  return viewMatrix(cam, canvas.width, canvas.height, frameOf(state.project).w).inverse().transformPoint({ x: (px - r.left) * dpr, y: (py - r.top) * dpr });
 }
 
 function hitTest(x: number, y: number) {
@@ -162,7 +183,8 @@ canvas.addEventListener('pointermove', (e) => {
       }
     } else {
       // Zoom around the fingers and follow them as they move.
-      const zoom = Math.max(0.25, Math.min(8, gesture.cam.zoom * k));
+      const lim = zoomLimits(state.project);
+      const zoom = Math.max(lim.min, Math.min(lim.max, gesture.cam.zoom * k));
       const anchor = toWorld(gesture.c0.x, gesture.c0.y, gesture.cam);
       state.view = { ...gesture.cam, zoom };
       const now = toWorld(c.x, c.y);
@@ -177,7 +199,7 @@ canvas.addEventListener('pointermove', (e) => {
     gesture.moved = true;
   } else if (gesture.kind === 'pan') {
     const r = canvas.getBoundingClientRect();
-    const k = (r.width / 1920) * gesture.cam.zoom;
+    const k = (r.width / frameOf(state.project).w) * gesture.cam.zoom;
     if (Math.hypot(e.clientX - gesture.sx, e.clientY - gesture.sy) > 4) gesture.moved = true;
     state.view = { ...gesture.cam, x: gesture.cam.x - (e.clientX - gesture.sx) / k, y: gesture.cam.y - (e.clientY - gesture.sy) / k };
   }
@@ -198,7 +220,7 @@ function endPointer(e: PointerEvent) {
   if (g?.kind === 'pan' && !g.moved) {
     // Tap on empty board: deselect; double-tap: show the whole board.
     const now = performance.now();
-    if (now - lastTap.time < 350 && Math.hypot(e.clientX - lastTap.x, e.clientY - lastTap.y) < 30) state.view = { ...FULL_BOARD };
+    if (now - lastTap.time < 350 && Math.hypot(e.clientX - lastTap.x, e.clientY - lastTap.y) < 30) state.view = fullView(state.project);
     lastTap = { time: now, x: e.clientX, y: e.clientY };
     if (state.selected) { state.selected = null; ui.renderPanels(); renderBottomBar(); }
   }
@@ -215,7 +237,8 @@ canvas.addEventListener('pointercancel', endPointer);
 canvas.addEventListener('wheel', (e) => {
   e.preventDefault();
   const before = toWorld(e.clientX, e.clientY);
-  state.view = { ...state.view, zoom: Math.max(0.25, Math.min(8, state.view.zoom * Math.exp(-e.deltaY * 0.0015))) };
+  const lim = zoomLimits(state.project);
+  state.view = { ...state.view, zoom: Math.max(lim.min, Math.min(lim.max, state.view.zoom * Math.exp(-e.deltaY * 0.0015))) };
   const after = toWorld(e.clientX, e.clientY);
   state.view.x += before.x - after.x; state.view.y += before.y - after.y;
   requestDraw();
@@ -257,6 +280,7 @@ function renderHeader() {
     h('button', { class: 'icon', onclick: redo, title: `${t('redo')} (Ctrl+Shift+Z)`, 'aria-label': t('redo') }, '↷'),
     h('span', { id: 'status', class: 'status' }, state.saveStatus),
     h('span', { class: 'spacer' }),
+    h('button', { class: 'desktop-only accent', onclick: openWizard }, `✨ ${t('fromScript')}`),
     h('button', { class: 'desktop-only', onclick: openProjects }, t('projects')),
     h('button', { class: 'desktop-only', onclick: () => { setLang(getLang() === 'ar' ? 'en' : 'ar'); renderAll(); } }, t('lang')),
     h('button', { class: 'desktop-only', onclick: openMenu }, `☰ ${t('menu')}`),
@@ -277,38 +301,71 @@ function renderBottomBar() {
   );
 }
 
-function renderTimeline() {
-  const s = schedule(state.project);
-  const box = $('timeline');
-  box.replaceChildren(...state.project.elements.map((e, i) => {
-    const dur = s.slots[i].end - s.slots[i].start;
-    const card = h('div', {
-      class: 'card' + (state.selected === e.id ? ' selected' : ''), draggable: 'true', 'data-id': e.id, role: 'button', tabindex: 0,
-      style: `flex-basis:${Math.max(84, Math.min(260, dur * 26))}px`,
-      onclick: () => {
-        state.selected = e.id;
-        if (!state.playing) state.view = e.camera ?? autoCamera(boundsOf(e));
-        renderPanels(); renderBottomBar(); requestDraw();
-      },
+function selectScene(id: string) {
+  state.scene = id;
+  state.selected = null;
+  const first = state.project.elements.find((e) => e.scene === id);
+  if (first && !state.playing) state.view = first.camera ?? autoCamera(boundsOf(first), state.project);
+  renderPanels(); renderBottomBar(); requestDraw();
+  if (isPhone()) setSheet('edit');
+}
+
+function elementCard(e: Project['elements'][number], i: number, s: ReturnType<typeof schedule>) {
+  const dur = s.slots[i].end - s.slots[i].start;
+  const card = h('div', {
+    class: 'card' + (state.selected === e.id ? ' selected' : ''), draggable: 'true', 'data-id': e.id, role: 'button', tabindex: 0,
+    style: `flex-basis:${Math.max(84, Math.min(220, dur * 24))}px`,
+    onclick: () => {
+      state.selected = e.id;
+      state.scene = e.scene ?? null;
+      if (!state.playing) state.view = e.camera ?? autoCamera(boundsOf(e), state.project);
+      renderPanels(); renderBottomBar(); requestDraw();
     },
-      h('div', { class: 'card-kind' }, e.kind === 'text' ? 'T' : e.kind === 'image' ? '▣' : '✎', ` ${i + 1}`),
-      h('div', { class: 'card-name', dir: 'auto' }, e.name),
-      h('div', { class: 'card-time' }, `${dur.toFixed(1)}s`));
-    card.addEventListener('dragstart', (ev) => ev.dataTransfer?.setData('text/plain', e.id));
-    card.addEventListener('dragover', (ev) => ev.preventDefault());
-    card.addEventListener('drop', (ev) => {
-      ev.preventDefault();
-      const from = ev.dataTransfer?.getData('text/plain');
-      const els = state.project.elements;
-      const a = els.findIndex((x) => x.id === from), b = els.indexOf(e);
-      if (a < 0 || a === b) return;
-      const [moved] = els.splice(a, 1);
-      els.splice(b, 0, moved);
-      commit();
-    });
-    return card;
-  }));
-  if (!state.project.elements.length) box.append(h('div', { class: 'note empty' }, isPhone() ? t('emptyBoard') : t('emptyBoardDesktop')));
+  },
+    h('div', { class: 'card-kind' }, e.kind === 'text' ? 'T' : e.kind === 'image' ? '▣' : '✎', ` ${i + 1}`),
+    h('div', { class: 'card-name', dir: 'auto' }, e.name),
+    h('div', { class: 'card-time', dir: 'ltr' }, `${dur.toFixed(1)}s`));
+  card.addEventListener('dragstart', (ev) => ev.dataTransfer?.setData('text/plain', e.id));
+  card.addEventListener('dragover', (ev) => ev.preventDefault());
+  card.addEventListener('drop', (ev) => {
+    ev.preventDefault();
+    const from = ev.dataTransfer?.getData('text/plain');
+    const els = state.project.elements;
+    const a = els.findIndex((x) => x.id === from), b = els.indexOf(e);
+    if (a < 0 || a === b) return;
+    const [moved] = els.splice(a, 1);
+    moved.scene = e.scene; // dropping on another scene's card moves it into that scene
+    els.splice(els.indexOf(e) + (a < b ? 1 : 0), 0, moved);
+    commit();
+  });
+  return card;
+}
+
+function renderTimeline() {
+  const p = state.project;
+  const s = schedule(p);
+  const box = $('timeline');
+  const blocks = sceneSpans(p, s).map((sp) => {
+    const sc = sp.scene;
+    const active = state.scene === sc.id && !state.selected;
+    const cards = p.elements.map((e, i) => ({ e, i })).filter(({ e }) => e.scene === sc.id).map(({ e, i }) => elementCard(e, i, s));
+    return h('div', { class: `scene-block${active ? ' active' : ''}`, 'data-scene': sc.id },
+      h('button', {
+        class: `scene-head${active ? ' selected' : ''}${sc.voice ? ' has-voice' : ''}`, 'data-scene': sc.id,
+        'aria-label': `${t('scene')} ${sp.index + 1}${sc.voice ? ` · ${t('sceneVoice')}` : ''}`,
+        onclick: () => selectScene(sc.id),
+      },
+        h('span', { class: 'scene-name' }, `${t('scene')} ${sp.index + 1}`),
+        h('span', { class: 'scene-voice', 'aria-hidden': 'true' }, sc.voice ? '🎙' : '＋🎙'),
+        h('span', { class: 'scene-time', dir: 'ltr' }, `${(sp.end - sp.start).toFixed(1)}s`)),
+      h('div', { class: 'scene-cards' }, cards.length ? cards : h('div', { class: 'note scene-empty' }, '—')));
+  });
+  box.replaceChildren(...blocks, h('button', {
+    class: 'scene-add', 'aria-label': `+ ${t('newScene')}`,
+    onclick: () => { addScene(); if (isPhone()) setSheet('edit'); },
+  }, `＋ ${t('newScene')}`));
+  const cta = document.getElementById('empty-cta');
+  if (cta) cta.hidden = p.elements.length > 0 || state.playing;
   updateTransport();
 }
 
@@ -349,6 +406,8 @@ function updateTransport() {
 }
 
 ui.renderAll = renderAll;
+ui.play = (from?: number) => { play(from); };
+ui.stop = () => stop();
 ui.renderPanels = renderPanels;
 ui.renderTimeline = renderTimeline;
 ui.requestDraw = requestDraw;
@@ -375,8 +434,11 @@ function registerServiceWorker() {
 // ---------------- boot ----------------
 async function boot() {
   setLang(getLang());
-  $('stage-wrap').append(canvas);
-  new ResizeObserver(requestDraw).observe(canvas);
+  $('stage-wrap').append(canvas, h('div', { id: 'empty-cta', hidden: true },
+    h('button', { class: 'primary big', onclick: openWizard }, `✨ ${t('fromScript')}`),
+    h('button', { class: 'linkish', onclick: () => setSheet('add') }, t('orManual'))));
+  new ResizeObserver(requestDraw).observe($('stage-wrap'));
+  window.addEventListener('resize', requestDraw);
   document.querySelectorAll('.sheet-close').forEach((b) => b.addEventListener('click', () => setSheet('')));
   window.matchMedia('(max-width: 899px)').addEventListener('change', () => { setSheet(''); renderAll(); });
   window.addEventListener('online', () => document.body.classList.remove('offline'));

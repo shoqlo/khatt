@@ -86,6 +86,8 @@ export function layoutText(
   text: string,
   size: number,
   align: 'start' | 'center' | 'end' = 'start',
+  /** false = measure only (no glyph outlines): much faster, for word-wrapping */
+  paths = true,
 ): TextLayout {
   const scale = size / upem;
   const ext = font.hExtents();
@@ -114,7 +116,7 @@ export function layoutText(
         const infos = buf.getGlyphInfos();
         const pos = buf.getGlyphPositions();
         for (let i = 0; i < infos.length; i++) {
-          const d = font.glyphToPath(infos[i].codepoint);
+          const d = paths ? font.glyphToPath(infos[i].codepoint) : '';
           if (d) {
             glyphs.push({
               d,

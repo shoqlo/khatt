@@ -1,4 +1,4 @@
-import { BOARD_H, BOARD_W, type BoardElement, type Camera, type Project } from './types';
+import { frameOf, type BoardElement, type Camera, type Project } from './types';
 
 export interface Bounds { x: number; y: number; w: number; h: number }
 
@@ -18,7 +18,19 @@ export interface Schedule {
 }
 
 export const END_TRANSITION = 1.0;
-export const FULL_BOARD: Camera = { x: BOARD_W / 2, y: BOARD_H / 2, zoom: 1 };
+
+type Shape = Pick<Project, 'aspect' | 'board'>;
+
+/** Camera that shows the whole board inside the video frame. */
+export function fullView(p: Shape): Camera {
+  const f = frameOf(p);
+  return { x: p.board.width / 2, y: p.board.height / 2, zoom: Math.min(f.w / p.board.width, f.h / p.board.height) };
+}
+
+/** Zoom range for editing and auto-framing: from the whole board up to 8x closer than one frame. */
+export function zoomLimits(p: Shape) {
+  return { min: fullView(p).zoom * 0.5, max: 8 };
+}
 
 export function schedule(p: Project): Schedule {
   let t = 0;
@@ -55,29 +67,34 @@ export function lerpCamera(a: Camera, b: Camera, k: number): Camera {
   return { x: a.x + (b.x - a.x) * k, y: a.y + (b.y - a.y) * k, zoom: z };
 }
 
-export function autoCamera(b: Bounds): Camera {
+export function autoCamera(b: Bounds, p: Shape): Camera {
+  const f = frameOf(p);
   const pad = 1.35;
-  const zoom = Math.min(BOARD_W / (b.w * pad), BOARD_H / (b.h * pad));
-  return clampToBoard({ x: b.x + b.w / 2, y: b.y + b.h / 2, zoom: Math.max(0.5, Math.min(3, zoom)) });
+  const zoom = Math.min(f.w / (b.w * pad), f.h / (b.h * pad));
+  const full = fullView(p).zoom;
+  return clampToBoard({ x: b.x + b.w / 2, y: b.y + b.h / 2, zoom: Math.max(Math.min(0.5, full), Math.min(3, zoom)) }, p);
 }
 
 /** Keep the view on the board (no grey margin) whenever the zoom allows it. */
-export function clampToBoard(c: Camera): Camera {
-  const hw = BOARD_W / c.zoom / 2, hh = BOARD_H / c.zoom / 2;
-  const cx = hw * 2 >= BOARD_W ? BOARD_W / 2 : Math.min(BOARD_W - hw, Math.max(hw, c.x));
-  const cy = hh * 2 >= BOARD_H ? BOARD_H / 2 : Math.min(BOARD_H - hh, Math.max(hh, c.y));
+export function clampToBoard(c: Camera, p: Shape): Camera {
+  const f = frameOf(p);
+  const W = p.board.width, H = p.board.height;
+  const hw = f.w / c.zoom / 2, hh = f.h / c.zoom / 2;
+  const cx = hw * 2 >= W ? W / 2 : Math.min(W - hw, Math.max(hw, c.x));
+  const cy = hh * 2 >= H ? H / 2 : Math.min(H - hh, Math.max(hh, c.y));
   return { x: cx, y: cy, zoom: c.zoom };
 }
 
-export function elementCamera(el: BoardElement, boundsOf: (el: BoardElement) => Bounds): Camera {
-  return el.camera ? clampToBoard(el.camera) : autoCamera(boundsOf(el));
+export function elementCamera(el: BoardElement, p: Shape, boundsOf: (el: BoardElement) => Bounds): Camera {
+  return el.camera ? clampToBoard(el.camera, p) : autoCamera(boundsOf(el), p);
 }
 
 export function cameraAt(p: Project, s: Schedule, t: number, boundsOf: (el: BoardElement) => Bounds): Camera {
-  let prev: Camera = FULL_BOARD;
+  const full = fullView(p);
+  let prev: Camera = full;
   for (let i = 0; i < s.slots.length; i++) {
     const slot = s.slots[i];
-    const cam = elementCamera(p.elements[i], boundsOf);
+    const cam = elementCamera(p.elements[i], p, boundsOf);
     if (t < slot.revealStart) {
       if (t < slot.start) return prev;
       const k = (t - slot.start) / (slot.revealStart - slot.start);
@@ -86,7 +103,7 @@ export function cameraAt(p: Project, s: Schedule, t: number, boundsOf: (el: Boar
     if (t < slot.end) return cam;
     prev = cam;
   }
-  const end = p.endCamera ?? FULL_BOARD;
+  const end = p.endCamera ?? full;
   if (t < s.endTransitionStart) return prev;
   if (t < s.endTransitionEnd) {
     return lerpCamera(prev, end, ease((t - s.endTransitionStart) / (s.endTransitionEnd - s.endTransitionStart)));

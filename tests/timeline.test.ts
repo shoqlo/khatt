@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { schedule, revealProgress, cameraAt, fitToDuration, FULL_BOARD, autoCamera } from '../src/engine/timeline';
+import { schedule, revealProgress, cameraAt, fitToDuration, fullView, autoCamera, clampToBoard } from '../src/engine/timeline';
 import { newProject, defaultTiming, type SvgElement } from '../src/engine/types';
 
 const svgEl = (id: string, x = 0): SvgElement => ({
@@ -25,12 +25,12 @@ describe('timeline', () => {
   it('camera starts on the full board, frames each element, returns at the end', () => {
     const p = newProject(); p.elements = [svgEl('a')]; p.endHold = 1;
     const s = schedule(p);
-    expect(cameraAt(p, s, 0, bounds)).toEqual(FULL_BOARD);
-    expect(cameraAt(p, s, 2, bounds)).toEqual(autoCamera(bounds()));
-    expect(cameraAt(p, s, s.total, bounds)).toEqual(FULL_BOARD);
+    expect(cameraAt(p, s, 0, bounds)).toEqual(fullView(p));
+    expect(cameraAt(p, s, 2, bounds)).toEqual(autoCamera(bounds(), p));
+    expect(cameraAt(p, s, s.total, bounds)).toEqual(fullView(p));
     const mid = cameraAt(p, s, 0.5, bounds);
     expect(mid.zoom).toBeGreaterThan(1);
-    expect(mid.zoom).toBeLessThan(autoCamera(bounds()).zoom);
+    expect(mid.zoom).toBeLessThan(autoCamera(bounds(), p).zoom);
   });
   it('fitToDuration makes the video end with the voice-over', () => {
     const p = newProject(); p.elements = [svgEl('a'), svgEl('b'), svgEl('c')];
@@ -44,12 +44,26 @@ describe('timeline', () => {
   });
 });
 
-describe('camera clamping', () => {
-  it('never shows past the board edge', async () => {
-    const { clampToBoard } = await import('../src/engine/timeline');
-    const c = clampToBoard({ x: 1900, y: 20, zoom: 2 });
+describe('camera clamping and video shapes', () => {
+  it('never shows past the board edge', () => {
+    const p = newProject();
+    const c = clampToBoard({ x: 1900, y: 20, zoom: 2 }, p);
     expect(c.x + 1920 / 2 / 2).toBeLessThanOrEqual(1920);
     expect(c.y - 1080 / 2 / 2).toBeGreaterThanOrEqual(0);
-    expect(clampToBoard({ x: 5, y: 5, zoom: 0.8 })).toEqual({ x: 960, y: 540, zoom: 0.8 });
+    expect(clampToBoard({ x: 5, y: 5, zoom: 0.8 }, p)).toEqual({ x: 960, y: 540, zoom: 0.8 });
+  });
+  it('a vertical project is a 1080x1920 frame', () => {
+    const p = newProject('v', 'portrait');
+    expect(p.board).toMatchObject({ width: 1080, height: 1920 });
+    expect(fullView(p)).toEqual({ x: 540, y: 960, zoom: 1 });
+  });
+  it('a board bigger than one frame zooms out to show everything at the end', () => {
+    const p = newProject();
+    p.board.width = 1920 * 3; p.board.height = 1080 * 2;
+    const f = fullView(p);
+    expect(f.zoom).toBeCloseTo(1 / 3);
+    expect(f.x).toBe(2880);
+    // one frame-sized cell is framed at zoom ~1
+    expect(autoCamera({ x: 1920, y: 0, w: 1920 / 1.35, h: 1080 / 1.35 }, p).zoom).toBeCloseTo(1);
   });
 });

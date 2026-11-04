@@ -27,6 +27,7 @@ function wav(secs = 12, sr = 16000) {
   return b;
 }
 fs.writeFileSync(path.join(OUT, 'voice.wav'), wav());
+fs.writeFileSync(path.join(OUT, 'voice3.wav'), wav(3));
 
 async function makePng(page) {
   const b64 = await page.evaluate(() => {
@@ -214,7 +215,7 @@ const browser = await chromium.launch({ args: ['--use-fake-ui-for-media-stream',
   await page.locator('#tabs .tab').nth(4).tap();
   await page.locator('#audio-input').setInputFiles(path.join(OUT, 'voice.wav'));
   await page.waitForFunction(() => !!window.khatt.state.project.audio, null, { timeout: 10000 });
-  await page.locator('#library button.primary').tap();
+  await page.locator('#library button', { hasText: 'اضبط التوقيت على طول الصوت' }).tap();
   const total = await k(() => window.khatt.schedule().total);
   check('phone: fit timing to the voice-over', Math.abs(total - 12) < 0.3, `${total.toFixed(2)}s`);
   // Microphone recording (fake device)
@@ -227,7 +228,7 @@ const browser = await chromium.launch({ args: ['--use-fake-ui-for-media-stream',
   // put the 12s voice back for the export checks
   await page.locator('#audio-input').setInputFiles(path.join(OUT, 'voice.wav'));
   await page.waitForFunction(() => window.khatt.state.project.audio?.duration > 11, null, { timeout: 10000 });
-  await page.locator('#library button.primary').tap();
+  await page.locator('#library button', { hasText: 'اضبط التوقيت على طول الصوت' }).tap();
   await k(() => window.khatt.setSheet(''));
 
   // Export through the UI (phone default = 720p)
@@ -299,6 +300,144 @@ const browser = await chromium.launch({ args: ['--use-fake-ui-for-media-stream',
   // Mid-draw frames of the phone export
   check('phone: no script errors', errors.length === 0, errors.slice(0, 3).join(' | '));
 
+  await ctx.close();
+}
+
+// =====================================================================
+// PHONE: script -> draft video, a voice per scene, replace a drawing, vertical export
+// =====================================================================
+{
+  const ctx = await browser.newContext({ ...devices['Pixel 7'], locale: 'ar', acceptDownloads: true });
+  const page = await ctx.newPage();
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(String(e)));
+  const k = (fn, arg) => page.evaluate(fn, arg);
+  await page.goto(BASE);
+  await page.waitForFunction(() => window.khatt);
+  check('script: empty board offers "Video from a script"', await page.locator('#empty-cta button.primary').isVisible());
+  await page.locator('#empty-cta button.primary').tap();
+  const script = 'الجمل حيوان صبور يعيش في الصحراء ويحمل الناس والبضائع.\n\nيستطيع الجمل أن يعيش أياماً طويلة بلا ماء.\n\nيحب الأطفال ركوب الجمل في الرحلات المدرسية.';
+  await page.locator('dialog.wizard textarea').fill(script);
+  const stats = await page.locator('dialog.wizard .note').first().textContent();
+  check('script: wizard counts scenes and estimates length', /^3 مشاهد · حوالي \d+ ث$/.test(stats.trim()), stats);
+  await page.locator('dialog.wizard .chip', { hasText: 'إعلان' }).tap();
+  await page.locator('dialog.wizard .chip', { hasText: 'عمودي' }).tap();
+  await page.locator('dialog.wizard .chip', { hasText: 'ملوّن' }).tap();
+  await shot(page, 'script-01-wizard.png');
+  const t0 = Date.now();
+  await page.locator('dialog.wizard button.primary.big').tap();
+  await page.waitForFunction(() => !document.querySelector('dialog.wizard'), null, { timeout: 60000 });
+  const genSecs = (Date.now() - t0) / 1000;
+  const draft = await k(() => {
+    const p = window.khatt.state.project;
+    return {
+      aspect: p.aspect, ratio: p.board.width / p.board.height, scenes: p.scenes.length, playing: window.khatt.state.playing,
+      perScene: p.scenes.map((s) => p.elements.filter((e) => e.scene === s.id).map((e) => e.kind)),
+      narration: p.scenes.map((s) => s.narration),
+      names: p.elements.filter((e) => e.kind !== 'text').map((e) => e.name),
+    };
+  });
+  check('script: draft made in seconds', genSecs < 15, `${genSecs.toFixed(1)}s`);
+  check('script: vertical video, board shaped 9:16', draft.aspect === 'portrait' && Math.abs(draft.ratio - 9 / 16) < 0.01, `${draft.aspect} ${draft.ratio.toFixed(3)}`);
+  check('script: one scene per paragraph, each with text and a drawing', draft.scenes === 3 && draft.perScene.every((k) => k.includes('text') && k.some((x) => x !== 'text')), JSON.stringify(draft.perScene));
+  check('script: drawings match the words', draft.names.some((n) => /جمل/.test(n)), draft.names.join(' · '));
+  check('script: narration kept per scene (for recording and subtitles)', draft.narration[1] === 'يستطيع الجمل أن يعيش أياماً طويلة بلا ماء.');
+  check('script: the draft starts playing by itself', draft.playing);
+  await page.waitForTimeout(1500);
+  await shot(page, 'script-02-draft-playing.png');
+  await k(() => window.khatt.stop());
+
+  // Record scene 1 with the microphone (fake device), from the scene strip
+  await page.locator('.scene-head').nth(0).tap();
+  await page.locator('#props button.primary', { hasText: 'سجّل صوتك' }).tap();
+  check('script: recorder shows the scene text large', (await page.locator('dialog.recorder .teleprompter').textContent()).startsWith('الجمل حيوان صبور'));
+  await page.locator('dialog.recorder .rec-start').tap();
+  await page.waitForTimeout(3600); // 1.8s countdown + ~1.8s recording
+  await page.locator('dialog.recorder button.danger').tap();
+  await page.locator('dialog.recorder button.primary', { hasText: 'استخدم' }).tap();
+  await page.waitForFunction(() => !!window.khatt.state.project.scenes[0].voice, null, { timeout: 10000 }).catch(() => {});
+  await page.locator('dialog.recorder button.wide').last().tap();
+  const v1 = await k(() => window.khatt.state.project.scenes[0].voice);
+  check('script: scene 1 voice recorded (countdown not included)', v1 && v1.duration > 1.2 && v1.duration < 2.6, v1 ? `${v1.duration.toFixed(2)}s` : 'none');
+
+  // Upload a 3-second voice note for scene 2 (switching scenes inside the panel): the scene stretches to it
+  await page.locator('#props .scene-jump .chip').nth(1).tap();
+  check('script: switch scenes without closing the panel', (await page.locator('#props h3').first().textContent()) === 'مشهد 2');
+  await page.locator('#scene-voice-input').setInputFiles(path.join(OUT, 'voice3.wav'));
+  await page.waitForFunction(() => !!window.khatt.state.project.scenes[1].voice, null, { timeout: 10000 });
+  const span2 = await k(() => {
+    const p = window.khatt.state.project, s = window.khatt.schedule();
+    const idx = p.elements.map((e, i) => [e, i]).filter(([e]) => e.scene === p.scenes[1].id).map(([, i]) => i);
+    return s.slots[idx[idx.length - 1]].end - s.slots[idx[0]].start;
+  });
+  check('script: scene 2 fitted to its uploaded voice note', span2 > 3.0 && span2 < 4.6, `${span2.toFixed(2)}s for a 3.0s voice`);
+  check('script: strip shows which scenes have a voice', (await page.locator('.scene-head.has-voice').count()) === 2);
+  await shot(page, 'script-03-scene-voice.png');
+  await k(() => window.khatt.setSheet(''));
+
+  // Scene-by-scene recorder from the menu
+  await page.locator('#bottombar [data-id=menu]').tap();
+  await page.locator('dialog .menu-item', { hasText: 'سجّل الصوت مشهداً مشهداً' }).tap();
+  const first = await page.locator('dialog.recorder .rec-nav .grow').textContent();
+  await page.locator('dialog.recorder .rec-nav button', { hasText: 'المشهد التالي' }).tap();
+  const second = await page.locator('dialog.recorder .rec-nav .grow').textContent();
+  check('script: scene-by-scene recorder steps through scenes', first.trim() === 'مشهد 1 / 3' && second.trim() === 'مشهد 2 / 3', `${first} → ${second}`);
+  await page.locator('dialog.recorder button.wide').last().tap();
+
+  // Replace a drawing: same place, same size, same scene and timing
+  const target = await k(() => {
+    const p = window.khatt.state.project;
+    const e = p.elements.find((x) => x.scene === p.scenes[2].id && x.kind !== 'text');
+    const s = window.khatt.elementSize(e);
+    window.khatt.state.selected = e.id; window.khatt.commit();
+    return { id: e.id, scene: e.scene, cx: e.x + (s.w * e.scale) / 2, cy: e.y + (s.h * e.scale) / 2, svg: e.svg, timing: JSON.stringify(e.timing) };
+  });
+  await page.locator('#bottombar [data-id=edit]').tap();
+  await page.locator('#props .replace-btn').tap();
+  check('script: replace mode explains itself', await page.locator('#library .replace-banner').isVisible());
+  await page.locator('#tabs .tab').nth(0).tap();
+  await page.locator('#library input[type=search]').fill('قمر');
+  await page.waitForTimeout(700);
+  await page.locator('#library .thumb').first().tap();
+  await page.waitForTimeout(500);
+  const after = await k((id) => {
+    const e = window.khatt.state.project.elements.find((x) => x.id === id);
+    const s = window.khatt.elementSize(e);
+    return { scene: e.scene, cx: e.x + (s.w * e.scale) / 2, cy: e.y + (s.h * e.scale) / 2, svg: e.svg, timing: JSON.stringify(e.timing), name: e.name };
+  }, target.id);
+  check('script: drawing replaced in place', after.svg !== target.svg && after.scene === target.scene && after.timing === target.timing && Math.hypot(after.cx - target.cx, after.cy - target.cy) < 3, `${after.name}, moved ${Math.hypot(after.cx - target.cx, after.cy - target.cy).toFixed(1)}px`);
+
+  // Vertical export with both voices mixed in
+  await page.locator('#bottombar [data-id=export]').tap();
+  const dl = page.waitForEvent('download', { timeout: 120000 });
+  await page.locator('dialog button.primary', { hasText: 'اصنع الفيديو' }).tap();
+  const file = path.join(OUT, 'script-vertical.mp4');
+  await (await dl).saveAs(file);
+  const probe = JSON.parse(execSync(`ffprobe -v error -show_entries stream=codec_type,width,height,duration -of json "${file}"`).toString()).streams;
+  const vid = probe.find((x) => x.codec_type === 'video'), aud = probe.find((x) => x.codec_type === 'audio');
+  const total = await k(() => window.khatt.schedule().total);
+  check('script: vertical 720x1280 video with sound', vid.width === 720 && vid.height === 1280 && !!aud, `${vid.width}x${vid.height}, audio ${aud ? 'yes' : 'no'}`);
+  check('script: video length matches the timeline', Math.abs(parseFloat(vid.duration) - total) < 0.2, `${parseFloat(vid.duration).toFixed(2)}s vs ${total.toFixed(2)}s`);
+  // Sound sits where the scenes are: loud during scene 2's voice note, quiet in the gap after scene 1's short take
+  const vol = (from, len) => { try { return parseFloat(/mean_volume: (-?[\d.]+)/.exec(execSync(`ffmpeg -v info -ss ${from} -t ${len} -i "${file}" -af volumedetect -f null - 2>&1`).toString())[1]); } catch { return NaN; } };
+  const spans = await k(() => {
+    const p = window.khatt.state.project, s = window.khatt.schedule();
+    return p.scenes.map((sc) => { const idx = p.elements.map((e, i) => [e, i]).filter(([e]) => e.scene === sc.id).map(([, i]) => i); return [s.slots[idx[0]].start, s.slots[idx[idx.length - 1]].end]; });
+  });
+  const loud = vol(spans[1][0] + 0.5, 2), quiet = vol(spans[2][0] + 0.5, 1.5);
+  check('script: each voice plays during its own scene', loud > -40 && (Number.isNaN(quiet) || quiet < loud - 15), `scene 2: ${loud} dB, scene 3: ${quiet} dB`);
+  const dls = page.waitForEvent('download');
+  await page.locator('dialog button', { hasText: 'الترجمة' }).tap();
+  const srtFile = path.join(OUT, 'script.srt');
+  await (await dls).saveAs(srtFile);
+  const srt = fs.readFileSync(srtFile, 'utf8');
+  check('script: subtitles follow the scenes', /^1\n00:00:00,000 --> 00:00:\d\d,\d{3}\nالجمل حيوان صبور/.test(srt) && srt.includes('3\n') && srt.includes('يحب الأطفال'), srt.split('\n').slice(0, 2).join(' | '));
+  await page.locator('dialog button', { hasText: 'إغلاق' }).last().tap();
+  for (const [i, t] of [[0, 'cover'], [1, 'mid']]) {
+    const at = i === 0 ? spans[0][0] + 1.2 : spans[1][0] + 1.5;
+    execSync(`ffmpeg -v error -y -ss ${at} -i "${file}" -frames:v 1 -vf scale=360:-1 "${path.join(OUT, `script-frame-${t}.png`)}"`);
+  }
+  check('script: no script errors', errors.length === 0, errors.slice(0, 3).join(' | '));
   await ctx.close();
 }
 

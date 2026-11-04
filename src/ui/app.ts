@@ -1,7 +1,9 @@
 // Shared editor state and actions used by every panel.
-import { newProject, uid, defaultTiming, type BoardElement, type Camera, type Project, type TextElement, type SvgElement, type ImageElement, type FontId, type AssetSource } from '../engine/types';
+import { newProject, newScene, uid, defaultTiming, type BoardElement, type Camera, type Project, type TextElement, type SvgElement, type ImageElement, type FontId, type AssetSource } from '../engine/types';
 import { prepare, prepareAll } from '../engine/prepare';
-import { FULL_BOARD } from '../engine/timeline';
+import { fullView } from '../engine/timeline';
+import { normalizeProject, insertIndexForScene, fitSceneToVoice } from '../engine/scenes';
+import { preloadProjectSound, blobDuration } from './sound';
 import type { CustomHand } from '../engine/hand';
 import { isRtlText } from '../engine/text';
 import { putProject, putAsset, resolveUrl, requestPersistence, storageIsVolatile } from '../storage/db';
@@ -11,7 +13,11 @@ import { toast } from './toast';
 export const state = {
   project: newProject(),
   selected: null as string | null,
-  view: { ...FULL_BOARD } as Camera,
+  /** selected scene (when no element is selected) */
+  scene: null as string | null,
+  /** when set, the next drawing/photo picked replaces this element instead of adding one */
+  replaceTarget: null as string | null,
+  view: { x: 960, y: 540, zoom: 1 } as Camera,
   playing: false,
   time: 0,
   tab: 'icons' as 'icons' | 'online' | 'text' | 'upload' | 'audio',
@@ -27,6 +33,9 @@ export const ui = {
   renderTabs: () => {},
   requestDraw: () => {},
   closeSheetOnPhone: () => {},
+  openSheet: (_s: 'add' | 'edit' | '') => {},
+  play: undefined as ((from?: number) => void) | undefined,
+  stop: undefined as (() => void) | undefined,
 };
 
 export const isPhone = () => window.matchMedia('(max-width: 899px)').matches;
@@ -116,25 +125,22 @@ export function redo() {
 }
 
 export function loadProject(p: Project) {
-  state.project = { ...newProject(), ...p };
+  state.project = normalizeProject({ ...newProject(), ...p });
   state.selected = null;
+  state.scene = null;
+  state.replaceTarget = null;
   state.time = 0;
-  state.view = { ...FULL_BOARD };
+  state.view = fullView(state.project);
   undoStack.length = 0; redoStack.length = 0;
   lastSnapshot = JSON.stringify(state.project);
   afterLoad();
 }
 
-export const audioEl = new Audio();
-
 export function afterLoad() {
+  normalizeProject(state.project);
   if (state.selected && !findEl(state.selected)) state.selected = null;
-  const a = state.project.audio;
-  if (a && audioEl.dataset.src !== a.src) {
-    audioEl.dataset.src = a.src;
-    resolveUrl(a.src).then((u) => { audioEl.src = u; }).catch((e) => toast(String(e.message), 'error'));
-  }
-  if (!a) { audioEl.removeAttribute('src'); delete audioEl.dataset.src; }
+  if (state.scene && !state.project.scenes.some((s) => s.id === state.scene)) state.scene = null;
+  preloadProjectSound(state.project);
   loadCustomHand();
   prepareAll(state.project.elements).catch((e) => toast(String(e.message), 'error')).finally(ui.requestDraw);
   ui.renderAll();
@@ -163,22 +169,81 @@ function base(name: string) {
   };
 }
 
+/** The scene new elements go into: the selected scene, else the selected element's scene, else the last scene. */
+export function currentSceneId(): string {
+  const p = state.project;
+  if (state.scene && p.scenes.some((s) => s.id === state.scene)) return state.scene;
+  const sel = state.selected ? findEl(state.selected) : undefined;
+  return sel?.scene ?? p.scenes[p.scenes.length - 1].id;
+}
+
+export function addScene(): string {
+  const p = state.project;
+  const s = newScene(String(p.scenes.length + 1));
+  const after = p.scenes.findIndex((x) => x.id === currentSceneId());
+  p.scenes.splice(after + 1, 0, s);
+  state.scene = s.id;
+  state.selected = null;
+  normalizeProject(p);
+  commit();
+  return s.id;
+}
+
+/** Attach a recording/upload to a scene and stretch the scene to the voice. */
+export async function setSceneVoice(sceneId: string, blob: Blob, name: string) {
+  const scene = state.project.scenes.find((s) => s.id === sceneId);
+  if (!scene) return;
+  const duration = await blobDuration(blob);
+  const src = await putAsset(blob, name);
+  scene.voice = { src, name, duration, volume: 1 };
+  fitSceneToVoice(state.project, sceneId);
+  preloadProjectSound(state.project);
+  commit();
+}
+
 async function addElement(e: BoardElement) {
+  let size: { w: number; h: number };
   try {
-    const p = await prepare(e);
-    // Place near the centre of the current view, nudged so new things don't stack exactly.
-    const n = state.project.elements.length;
-    e.x = Math.round(state.view.x - (p.w * e.scale) / 2 + ((n % 5) - 2) * 30);
-    e.y = Math.round(state.view.y - (p.h * e.scale) / 2 + ((n % 3) - 1) * 30);
+    size = await prepare(e);
   } catch (err) {
     toast(`${t('error')}: ${(err as Error).message}`, 'error');
     return;
   }
-  state.project.elements.push(e);
+  const target = state.replaceTarget ? findEl(state.replaceTarget) : undefined;
+  if (state.replaceTarget) { state.replaceTarget = null; document.body.classList.remove('replacing'); ui.renderTabs(); }
+  if (target) return replaceElement(target, e, size);
+  // Place near the centre of the current view, nudged so new things don't stack exactly.
+  const n = state.project.elements.length;
+  e.x = Math.round(state.view.x - (size.w * e.scale) / 2 + ((n % 5) - 2) * 30);
+  e.y = Math.round(state.view.y - (size.h * e.scale) / 2 + ((n % 3) - 1) * 30);
+  e.scene = currentSceneId();
+  state.project.elements.splice(insertIndexForScene(state.project, e.scene), 0, e);
   state.selected = e.id;
   await prepareAll([e]);
   commit();
   toast(t('added'), 'ok', 1200);
+  ui.closeSheetOnPhone();
+}
+
+/** Swap a drawing for another one: same place, same size on screen, same timing and scene. */
+async function replaceElement(target: BoardElement, e: BoardElement, size: { w: number; h: number }) {
+  const old = await prepare(target).catch(() => null);
+  const ow = old ? old.w * target.scale : 300, oh = old ? old.h * target.scale : 300;
+  const scale = Math.min(ow / size.w, oh / size.h);
+  const cx = target.x + ow / 2, cy = target.y + oh / 2;
+  const merged = {
+    ...e, id: target.id, scene: target.scene, timing: target.timing, mode: target.mode, direction: target.direction,
+    camera: target.camera, noHand: target.noHand, rotation: target.rotation, opacity: target.opacity,
+    scale: Math.round(scale * 1000) / 1000,
+    x: Math.round(cx - (size.w * scale) / 2), y: Math.round(cy - (size.h * scale) / 2),
+  } as BoardElement;
+  if (merged.kind === 'svg' && e.kind === 'svg' && e.strokeWidth != null) merged.strokeWidth = Math.round((e.strokeWidth * e.scale / scale) * 100) / 100;
+  const i = state.project.elements.indexOf(target);
+  state.project.elements[i] = merged;
+  state.selected = merged.id;
+  await prepareAll([merged]);
+  commit();
+  toast(t('replaced'), 'ok', 1200);
   ui.closeSheetOnPhone();
 }
 
@@ -218,11 +283,29 @@ export function removeEl(id: string) {
   commit();
 }
 
+/** Move an element one step earlier/later inside its own scene. */
 export function moveEl(id: string, delta: -1 | 1) {
   const els = state.project.elements;
   const i = els.findIndex((e) => e.id === id);
   const j = i + delta;
-  if (i < 0 || j < 0 || j >= els.length) return;
+  if (i < 0 || j < 0 || j >= els.length || els[j].scene !== els[i].scene) return;
   [els[i], els[j]] = [els[j], els[i]];
+  commit();
+}
+
+export function canMoveEl(id: string, delta: -1 | 1): boolean {
+  const els = state.project.elements;
+  const i = els.findIndex((e) => e.id === id);
+  const j = i + delta;
+  return i >= 0 && j >= 0 && j < els.length && els[j].scene === els[i].scene;
+}
+
+export function moveElToScene(id: string, sceneId: string) {
+  const el = findEl(id);
+  if (!el || el.scene === sceneId) return;
+  state.project.elements = state.project.elements.filter((e) => e !== el);
+  el.scene = sceneId;
+  state.project.elements.splice(insertIndexForScene(state.project, sceneId), 0, el);
+  normalizeProject(state.project);
   commit();
 }

@@ -10,6 +10,10 @@ This is an original implementation. It contains no VideoScribe code, artwork, im
 
 | | |
 |---|---|
+| **Video from a script** | Paste a script and choose the type (lesson, explainer, story, advert), the shape and the drawing style. The app makes an editable draft in seconds: one scene per paragraph, key words written on the board, matching drawings, and timing set from reading speed. It plays the draft automatically. Pictures are matched by key words, not by understanding the meaning; every part of the draft can be changed. |
+| **Scenes and a voice per scene** | Each scene has its own narration text and its own voice: record it or upload a voice note. The recorder shows the scene's text in large type while you speak, with a 3-2-1 countdown and a level meter, and can go through the scenes one by one. A scene stretches to its voice, and all voices are mixed into the exported video at the right moments. |
+| **Video shapes** | Landscape 16:9 (YouTube), vertical 9:16 (WhatsApp Status, TikTok, Reels) or square 1:1 (Instagram). |
+| **Replace drawing** | Swap any drawing or photo for another one. The new one keeps the old one's place, size, timing and scene. |
 | **Arabic writing** | HarfBuzz shaping (letters join, ligatures and harakat handled), mixed Arabic, English and numbers in one line, and the hand writes right to left. Fonts: Amiri and Cairo (SIL OFL). |
 | **Drawing library** | 12,963 drawings bundled with the app in 20 categories, in hand-drawn, line and colour styles. Search in Arabic or English: Arabic uses the official Unicode Arabic names plus a hand-checked glossary. The library works offline. |
 | **Open images** | Wikimedia Commons and Openverse are searched directly from the device with no key. Only images free for commercial use are shown (CC0, public domain, CC BY), credits are collected automatically, and SVG files become drawable line art. |
@@ -26,10 +30,10 @@ This is an original implementation. It contains no VideoScribe code, artwork, im
 ```bash
 npm install
 npm run dev          # http://localhost:5173
-npm test             # 27 unit tests
+npm test             # 52 unit tests
 npm run typecheck
 npm run build && npm run preview &   # production build on http://127.0.0.1:4173
-npm run e2e          # 38 browser checks (phone + desktop); screenshots and videos in test-results/
+npm run e2e          # 59 browser checks (phone + desktop); screenshots and videos in test-results/
 ```
 
 You need Node 20 or later.
@@ -37,7 +41,8 @@ You need Node 20 or later.
 ## Layout
 
 ```
-src/engine/      data model, timeline/camera, Arabic text layout, stroke preparation, renderer, export
+src/engine/      data model, scenes, timeline/camera, Arabic text layout, stroke preparation, renderer, export + audio mix
+src/generator/   script -> draft video (scene split, key words, layout, timing)
 src/library/     bundled-library search, Arabic glossary, Openverse/Wikimedia search, credits
 src/storage/     on-device storage (IndexedDB), project files
 src/ui/          phone-first editor (vanilla TypeScript), Arabic/English text
@@ -48,6 +53,7 @@ e2e/run.mjs      end-to-end checks
 
 ## Known limits
 
+- The draft maker picks pictures by key words (Arabic via the glossary and Unicode emoji names). It doesn't understand meaning; abstract sentences get text instead of a picture.
 - Live Openverse and Wikimedia searches are tested only against sample responses, not the real sites.
 - iPhone is tested only through emulation in Chromium. Safari itself has not been tested.
 - Credits for CC BY material have to be pasted into the video description. They are not burned into the video.

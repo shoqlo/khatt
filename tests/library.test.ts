@@ -66,3 +66,11 @@ describe('Arabic glossary', () => {
     expect(r.unknown).toEqual(['كلمةغريبة']);
   });
 });
+
+describe('Arabic ranking', () => {
+  it('"قمر" finds the moon before "قمر صناعي" (satellite)', async () => {
+    const r = await searchLibrary('قمر', { limit: 5 });
+    expect(r.items[0].en + ' ' + r.items[0].name).toMatch(/moon/);
+    expect(r.items[0].name).not.toMatch(/satellite/);
+  });
+});

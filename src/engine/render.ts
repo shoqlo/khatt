@@ -1,4 +1,4 @@
-import { BOARD_W, type BoardElement, type Camera, type Project } from './types';
+import { frameOf, type BoardElement, type Camera, type Project } from './types';
 import { getPrepared, type Prepared, type PreparedRaster, type PreparedVector, type Pt } from './prepare';
 import { cameraAt, ease, revealProgress, schedule, type Bounds, type Schedule } from './timeline';
 import { drawHand, type CustomHand } from './hand';
@@ -15,8 +15,9 @@ export function boundsOf(el: BoardElement): Bounds {
   return { x: el.x, y: el.y, w: w * el.scale, h: h * el.scale };
 }
 
-export function viewMatrix(cam: Camera, cw: number, ch: number): DOMMatrix {
-  const k = cam.zoom * (cw / BOARD_W);
+/** World -> canvas pixels. At zoom 1 one frame of world units (frameW wide) fills the canvas. */
+export function viewMatrix(cam: Camera, cw: number, ch: number, frameW: number): DOMMatrix {
+  const k = cam.zoom * (cw / frameW);
   return new DOMMatrix([k, 0, 0, k, cw / 2 - cam.x * k, ch / 2 - cam.y * k]);
 }
 
@@ -108,14 +109,14 @@ function drawRaster(ctx: CanvasRenderingContext2D, p: PreparedRaster, progress: 
 }
 
 /** Draw one element; returns the pen tip in world space if it is mid-draw. */
-export function drawElement(ctx: CanvasRenderingContext2D, el: BoardElement, prep: Prepared, progress: number): Pt | null {
+export function drawElement(ctx: CanvasRenderingContext2D, el: BoardElement, prep: Prepared, progress: number, boardW = 1920): Pt | null {
   if (progress <= 0) return null;
   let dx = 0;
   let mode = el.mode;
   ctx.save();
   ctx.globalAlpha *= el.opacity;
   if (mode === 'move-in' && progress < 1) {
-    const from = el.direction === 'rtl' ? BOARD_W + 200 - el.x : -(prep.w * el.scale + el.x + 200);
+    const from = el.direction === 'rtl' ? boardW + 200 - el.x : -(prep.w * el.scale + el.x + 200);
     dx = from * (1 - ease(progress));
   } else if (mode === 'fade' && progress < 1) {
     ctx.globalAlpha *= progress;
@@ -150,7 +151,7 @@ export function renderFrame(ctx: CanvasRenderingContext2D, p: Project, t: number
   ctx.globalAlpha = 1;
   ctx.fillStyle = '#d9d9d9';
   ctx.fillRect(0, 0, cw, ch);
-  const v = viewMatrix(cam, cw, ch);
+  const v = viewMatrix(cam, cw, ch, frameOf(p).w);
   ctx.setTransform(v);
   ctx.fillStyle = p.board.background;
   ctx.fillRect(0, 0, p.board.width, p.board.height);
@@ -160,7 +161,7 @@ export function renderFrame(ctx: CanvasRenderingContext2D, p: Project, t: number
     const prep = getPrepared(el);
     if (!prep) { pending++; return; }
     const progress = o.showAll ? 1 : revealProgress(s.slots[i], t);
-    const tp = drawElement(ctx, el, prep, progress);
+    const tp = drawElement(ctx, el, prep, progress, p.board.width);
     if (tp) tip = tp;
     if (o.selectedId === el.id) {
       const b = boundsOf(el);
