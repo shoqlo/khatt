@@ -1,0 +1,32 @@
+{
+  "name": "khatt",
+  "version": "0.1.0",
+  "description": "Arabic-first whiteboard animation editor",
+  "scripts": {
+    "dev": "node server/index.mjs & vite",
+    "build": "vite build",
+    "start": "node server/index.mjs",
+    "test": "vitest run",
+    "typecheck": "tsc",
+    "e2e": "node e2e/run.mjs"
+  },
+  "license": "UNLICENSED",
+  "dependencies": {
+    "@expo-google-fonts/amiri": "^0.4.1",
+    "@expo-google-fonts/cairo": "^0.4.2",
+    "@iconify-json/tabler": "^1.2.43",
+    "bidi-js": "^1.1.0",
+    "gifenc": "^1.0.3",
+    "harfbuzzjs": "^1.6.4",
+    "mp4-muxer": "^5.2.2",
+    "webm-muxer": "^5.1.4"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "typescript": "5.9",
+    "vite": "^8.3.5",
+    "vitest": "^5.1.0"
+  },
+  "private": true,
+  "type": "module"
+}
