@@ -67,11 +67,15 @@ export type BoardElement = SvgElement | ImageElement | TextElement;
 export type FontId = 'amiri' | 'amiri-bold' | 'cairo';
 
 export interface AssetSource {
-  provider: 'tabler' | 'pixabay' | 'upload';
+  provider: 'library' | 'openverse' | 'wikimedia' | 'upload';
   id: string;
+  /** library set id (for licence lookup) */
+  set?: string;
   author?: string;
   pageUrl?: string;
   license: string;
+  /** full credit line, when the licence requires one */
+  attribution?: string;
 }
 
 export interface AudioTrack {

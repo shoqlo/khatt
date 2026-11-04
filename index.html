@@ -2,13 +2,23 @@
 <html lang="ar" dir="rtl">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content" />
+  <meta name="theme-color" content="#1f1f1f" />
+  <meta name="description" content="خط — اصنع فيديوهات السبورة البيضاء بخط عربي · Arabic whiteboard animation videos" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-title" content="خط" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <link rel="manifest" href="./manifest.webmanifest" />
+  <link rel="icon" href="./icons/icon-192.png" type="image/png" />
+  <link rel="apple-touch-icon" href="./icons/apple-touch-icon.png" />
   <title>Khatt – خط</title>
 </head>
 <body>
   <header id="header"></header>
   <main>
-    <aside class="left">
+    <aside class="panel left" id="panel-add" aria-labelledby="sheet-add-title">
+      <div class="sheet-head"><h2 id="sheet-add-title"></h2><button class="sheet-close icon" type="button">✕</button></div>
       <nav id="tabs"></nav>
       <div id="library"></div>
     </aside>
@@ -17,8 +27,12 @@
       <div id="transport"></div>
       <div id="timeline"></div>
     </section>
-    <aside class="right" id="props"></aside>
+    <aside class="panel right" id="panel-edit" aria-labelledby="sheet-edit-title">
+      <div class="sheet-head"><h2 id="sheet-edit-title"></h2><button class="sheet-close icon" type="button">✕</button></div>
+      <div id="props"></div>
+    </aside>
   </main>
+  <nav id="bottombar"></nav>
   <script type="module" src="/src/ui/main.ts"></script>
 </body>
 </html>

@@ -3,6 +3,7 @@
 import type { BoardElement, ImageElement, SvgElement, TextElement } from './types';
 import { layoutText } from './text';
 import { getFont } from './fonts';
+import { resolveUrl } from '../storage/db';
 
 export interface Pt { x: number; y: number }
 
@@ -240,7 +241,7 @@ async function prepareText(el: TextElement): Promise<PreparedVector> {
 async function loadImage(src: string): Promise<HTMLImageElement> {
   const img = new Image();
   img.crossOrigin = 'anonymous';
-  img.src = src;
+  img.src = await resolveUrl(src);
   await img.decode();
   return img;
 }
