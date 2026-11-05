@@ -15,6 +15,7 @@ import { openMenu, openExport, openProjects } from './dialogs';
 import { h } from './dom';
 import { t, getLang, setLang } from './i18n';
 import { toast } from './toast';
+import { loadConfig } from '../config';
 
 const $ = (id: string) => document.getElementById(id)!;
 const canvas = h('canvas', { id: 'stage', tabindex: 0, 'aria-label': 'board' }) as HTMLCanvasElement;
@@ -443,6 +444,7 @@ async function boot() {
   window.matchMedia('(max-width: 899px)').addEventListener('change', () => { setSheet(''); renderAll(); });
   window.addEventListener('online', () => document.body.classList.remove('offline'));
   window.addEventListener('offline', () => { document.body.classList.add('offline'); toast(t('offline'), 'warn', 6000); });
+  await loadConfig();
   let initial: Project | null = null;
   try {
     const current = localStorage.getItem('khatt.current');

@@ -10,7 +10,8 @@ import type { FontId } from '../engine/types';
 import { fitToDuration } from '../engine/timeline';
 import { putAsset } from '../storage/db';
 import { loadLibrary, searchLibrary, drawingSvg, itemLabel, type LibItem, type LibStyle } from '../library/builtin';
-import { searchOpenverse, searchCommons, downloadHit, OnlineError, type OnlineHit, type Provider } from '../library/online';
+import { searchOpenverse, searchCommons, searchPixabay, downloadHit, OnlineError, type OnlineHit, type Provider } from '../library/online';
+import { appConfig } from '../config';
 
 const onlineMessage = (err: unknown) => err instanceof OnlineError
   ? t(({ blocked: 'errBlocked', offline: 'errOffline', rate: 'errRate', server: 'errServer' } as const)[err.kind])
@@ -119,7 +120,7 @@ function drawingsTab(body: HTMLElement) {
 }
 
 // ---------------- open images (Openverse / Wikimedia Commons) ----------------
-const online = { query: '', provider: 'wikimedia' as Provider, drawingsOnly: true, page: 1, offset: 0 };
+const online = { query: '', provider: null as Provider | null, drawingsOnly: true, page: 1, offset: 0 };
 
 function onlineTab(body: HTMLElement) {
   const grid = h('div', { class: 'grid photos', role: 'list' });
@@ -130,9 +131,13 @@ function onlineTab(body: HTMLElement) {
     h('input', { type: 'checkbox', checked: online.drawingsOnly, onchange: (e: Event) => { online.drawingsOnly = (e.target as HTMLInputElement).checked; run(); } }),
     t('drawingsOnly'));
 
+  // Pixabay appears (and is chosen first) only when the app's Pixabay middleman is set up.
+  const pixabay = appConfig().pixabayProxy;
+  online.provider ??= pixabay ? 'pixabay' : 'wikimedia';
+  if (online.provider === 'pixabay' && !pixabay) online.provider = 'wikimedia';
   const setCredit = () => {
-    credit.textContent = online.provider === 'openverse' ? t('openverseCredit') : t('wikimediaCredit');
-    drawingsToggle.hidden = online.provider !== 'wikimedia';
+    credit.textContent = online.provider === 'openverse' ? t('openverseCredit') : online.provider === 'pixabay' ? t('pixabayCredit') : t('wikimediaCredit');
+    drawingsToggle.hidden = online.provider === 'openverse';
   };
 
   const run = async (append = false) => {
@@ -142,7 +147,9 @@ function onlineTab(body: HTMLElement) {
     note.textContent = '…';
     try {
       const { dict } = await loadLibrary();
-      const r = online.provider === 'openverse'
+      const r = online.provider === 'pixabay'
+        ? await searchPixabay(online.query, online.page, online.drawingsOnly, pixabay, dict)
+        : online.provider === 'openverse'
         ? await searchOpenverse(online.query, online.page, dict)
         : await searchCommons(online.query, online.offset, online.drawingsOnly, dict);
       online.page++; online.offset += 24;
@@ -169,7 +176,7 @@ function onlineTab(body: HTMLElement) {
     } catch (err) { note.textContent = onlineMessage(err); }
   };
 
-  const sources: [Provider, Key][] = [['wikimedia', 'sourceWikimedia'], ['openverse', 'sourceOpenverse']];
+  const sources: [Provider, Key][] = [...(pixabay ? [['pixabay', 'sourcePixabay'] as [Provider, Key]] : []), ['wikimedia', 'sourceWikimedia'], ['openverse', 'sourceOpenverse']];
   const srcChips = h('div', { class: 'chips' });
   const renderSrc = () => srcChips.replaceChildren(...sources.map(([p, k]) => h('button', {
     class: online.provider === p ? 'chip active' : 'chip', 'aria-pressed': String(online.provider === p),

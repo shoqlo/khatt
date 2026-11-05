@@ -4,7 +4,7 @@
 // attribution text the licence needs.
 import { hasArabic, toEnglishQuery } from './glossary';
 
-export type Provider = 'openverse' | 'wikimedia';
+export type Provider = 'openverse' | 'wikimedia' | 'pixabay';
 
 export interface OnlineHit {
   provider: Provider;
@@ -64,6 +64,25 @@ export async function searchOpenverse(q: string, page: number, dict: Record<stri
     } satisfies OnlineHit;
   });
   return { hits, more: page < (json.page_count ?? 1), searchedAs: text, unknown };
+}
+
+// ---------------- Pixabay (through the app's own middleman, which holds the key) ----------------
+export async function searchPixabay(q: string, page: number, drawingsOnly: boolean, proxy: string, dict: Record<string, string> = {}, fetchImpl: typeof fetch = fetch): Promise<OnlineResult> {
+  // Pixabay has no Arabic search, so Arabic words are translated first.
+  const { text, unknown } = query(q, dict);
+  if (!text || !proxy) return { hits: [], more: false, searchedAs: text, unknown };
+  const u = new URL(`${proxy}/search`);
+  u.searchParams.set('q', text);
+  u.searchParams.set('type', drawingsOnly ? 'illustration' : 'all');
+  u.searchParams.set('page', String(page));
+  const json = await getJson(u.toString(), fetchImpl);
+  const hits: OnlineHit[] = (json.hits ?? []).map((h: { id: number; title: string; user: string; pageURL: string; previewURL: string; type: string }) => ({
+    provider: 'pixabay', id: String(h.id), title: h.title || 'Pixabay', thumb: h.previewURL, isSvg: false,
+    creator: h.user || 'Pixabay', license: 'Pixabay Content License', licenseUrl: 'https://pixabay.com/service/license-summary/',
+    pageUrl: h.pageURL, attribution: `Image by ${h.user} from Pixabay`,
+    download: [`${proxy}/image?id=${h.id}`],
+  } satisfies OnlineHit));
+  return { hits, more: hits.length >= 30 && page < 10, searchedAs: text, unknown };
 }
 
 // ---------------- Wikimedia Commons ----------------

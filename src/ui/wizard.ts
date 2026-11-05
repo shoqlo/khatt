@@ -11,7 +11,8 @@ import { getFont } from '../engine/fonts';
 import { layoutText } from '../engine/text';
 import { putAsset, resolveUrl } from '../storage/db';
 import { loadLibrary, type LibStyle } from '../library/builtin';
-import { searchCommons, downloadHit } from '../library/online';
+import { searchCommons, searchPixabay, downloadHit } from '../library/online';
+import { appConfig } from '../config';
 import { libraryCandidates } from '../generator/pick';
 
 const opts = {
@@ -123,7 +124,9 @@ export function openWizard() {
       const online = async (k: Keyword, used: Set<string>): Promise<DrawingPick | null> => {
         if (!opts.online || !navigator.onLine || !k.english.length) return null;
         try {
-          const r = await searchCommons(k.english[0], 0, true, lib.dict);
+          // Pixabay first when the app's middleman is set up (better illustrations), else Wikimedia.
+          const px = appConfig().pixabayProxy;
+          const r = px ? await searchPixabay(k.english[0], 1, true, px, lib.dict) : await searchCommons(k.english[0], 0, true, lib.dict);
           for (const hit of r.hits.slice(0, 4)) {
             if (used.has(hit.id)) continue;
             try {

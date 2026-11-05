@@ -66,10 +66,11 @@ const en = {
   scriptPlaceholder: 'Write or paste your script here…\n\nExample:\nThe camel is a patient animal that lives in the desert.\n\nIt can live for days without water.',
   videoType: 'Type of video', typeLesson: 'Lesson', typeExplainer: 'Explainer', typeStory: 'Story', typePromo: 'Advert',
   drawingStyle: 'Drawing style', styleMixed: 'Mixed', resources: 'Pictures to use', resBuiltin: 'Built-in drawings',
-  resOnline: 'Open images from the internet (Wikimedia)', resPhotos: 'My photos', resPhotosHint: 'Your photos are used in order: the first photo goes in scene 1, the second in scene 2…',
+  resOnline: 'Pictures from the internet when no built-in drawing fits', resPhotos: 'My photos', resPhotosHint: 'Your photos are used in order: the first photo goes in scene 1, the second in scene 2…',
   voicePlan: 'Voice', voiceRecordAfter: 'I will record my voice for each scene', voiceNone: 'No voice — words on screen',
   createDraft: 'Create the draft', making: 'Making scene', draftReady: 'Your draft is ready. Tap any drawing to change or replace it.',
   scriptEmpty: 'Write or paste a script first.', newProjectNote: 'This creates a new project; your current one stays in My projects.',
+  sourcePixabay: 'Pixabay', pixabayCredit: 'Images from Pixabay (free to use in your videos)',
   approx: 'about', secondsShort: 'sec', orManual: 'or start with an empty board', watch: 'Watch',
 };
 
@@ -139,10 +140,11 @@ const ar: typeof en = {
   scriptPlaceholder: 'اكتب أو الصق النص هنا…\n\nمثال:\nالجمل حيوان صبور يعيش في الصحراء.\n\nيستطيع الجمل أن يعيش أياماً بلا ماء.',
   videoType: 'نوع الفيديو', typeLesson: 'درس', typeExplainer: 'شرح فكرة', typeStory: 'قصة', typePromo: 'إعلان',
   drawingStyle: 'نمط الرسومات', styleMixed: 'منوّع', resources: 'الصور المستخدمة', resBuiltin: 'الرسومات المدمجة',
-  resOnline: 'صور مفتوحة من الإنترنت (ويكيميديا)', resPhotos: 'صوري', resPhotosHint: 'تُستخدم صورك بالترتيب: الأولى في المشهد 1، والثانية في المشهد 2…',
+  resOnline: 'صور من الإنترنت عندما لا يناسب أي رسم مدمج', resPhotos: 'صوري', resPhotosHint: 'تُستخدم صورك بالترتيب: الأولى في المشهد 1، والثانية في المشهد 2…',
   voicePlan: 'الصوت', voiceRecordAfter: 'سأسجل صوتي لكل مشهد', voiceNone: 'بدون صوت — كلمات على الشاشة',
   createDraft: 'اصنع المسودة', making: 'جارٍ صنع المشهد', draftReady: 'المسودة جاهزة. اضغط على أي رسم لتغييره أو استبداله.',
   scriptEmpty: 'اكتب النص أو الصقه أولاً.', newProjectNote: 'سيُنشأ مشروع جديد؛ مشروعك الحالي يبقى في «مشاريعي».',
+  sourcePixabay: 'Pixabay', pixabayCredit: 'صور من Pixabay (مجانية للاستخدام في فيديوهاتك)',
   approx: 'حوالي', secondsShort: 'ث', orManual: 'أو ابدأ بلوحة فارغة', watch: 'شاهد',
 };
 

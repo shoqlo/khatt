@@ -441,6 +441,42 @@ const browser = await chromium.launch({ args: ['--use-fake-ui-for-media-stream',
   await ctx.close();
 }
 
+// =====================================================================
+// PIXABAY through the app's middleman (fake middleman; proves the app side)
+// =====================================================================
+{
+  const ctx = await browser.newContext({ ...devices['Pixel 7'], locale: 'ar' });
+  const page = await ctx.newPage();
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(String(e)));
+  const png = await (async () => { await page.goto('about:blank'); return makePng(page); })();
+  const asked = [];
+  const cors = { 'access-control-allow-origin': '*' };
+  await ctx.route('**/config.json', (r) => r.fulfill({ headers: { 'content-type': 'application/json' }, body: JSON.stringify({ pixabayProxy: 'https://px.example' }) }));
+  await ctx.route('https://px.example/**', (r) => {
+    const u = r.request().url();
+    asked.push(u);
+    if (u.includes('/search')) return r.fulfill({ headers: { ...cors, 'content-type': 'application/json' }, body: JSON.stringify({ total: 1, hits: [{ id: 7, title: 'camel', user: 'artist', pageURL: 'https://pixabay.com/x-7/', previewURL: 'https://px.example/preview/7.png', width: 640, height: 480, type: 'illustration' }] }) });
+    return r.fulfill({ headers: { ...cors, 'content-type': 'image/png' }, body: png });
+  });
+  await page.goto(BASE);
+  await page.waitForFunction(() => window.khatt);
+  await page.locator('#bottombar [data-id=add]').tap();
+  await page.locator('#tabs .tab').nth(1).tap();
+  const active = await page.locator('#library .chip.active').first().textContent();
+  check('pixabay: shown and chosen first once the middleman is set up', active === 'Pixabay', active);
+  await page.locator('#library input[type=search]').fill('جمل');
+  await page.locator('#library form button[type=submit]').tap();
+  await page.waitForSelector('#library .thumb');
+  check('pixabay: Arabic search translated, no key in the app', asked.some((u) => u.includes('/search?q=camel')) && asked.every((u) => !/key=/.test(u)), asked[0]);
+  await page.locator('#library .thumb').first().tap();
+  await page.waitForFunction(() => window.khatt.state.project.elements.length === 1, null, { timeout: 10000 });
+  const el = await page.evaluate(() => window.khatt.state.project.elements[0]);
+  check('pixabay: picture saved on the device with its source', el.kind === 'image' && el.src.startsWith('asset:') && el.source.provider === 'pixabay', `${el.kind} ${el.source?.attribution}`);
+  check('pixabay: no script errors', errors.length === 0, errors.slice(0, 3).join(' | '));
+  await ctx.close();
+}
+
 // Offline + installability. Separate context: Playwright bypasses service workers whenever
 // requests are intercepted, so this context has no routes.
 {
