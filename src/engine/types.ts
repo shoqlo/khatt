@@ -77,7 +77,7 @@ export type BoardElement = SvgElement | ImageElement | TextElement;
 export type FontId = 'amiri' | 'amiri-bold' | 'cairo';
 
 export interface AssetSource {
-  provider: 'library' | 'openverse' | 'wikimedia' | 'pixabay' | 'upload';
+  provider: 'library' | 'openverse' | 'wikimedia' | 'pixabay' | 'unsplash' | 'pexels' | 'upload';
   id: string;
   /** library set id (for licence lookup) */
   set?: string;

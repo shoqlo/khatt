@@ -267,6 +267,13 @@ export async function addImageBlob(name: string, blob: Blob, source?: AssetSourc
   return addElement(e);
 }
 
+/** A picture used straight from its web link (Unsplash's rule: no copy on the device). */
+export function addImageUrl(name: string, url: string, width: number, height: number, source?: AssetSource) {
+  const scale = Math.min(1, 700 / Math.max(width, height));
+  const e: ImageElement = { ...base(name), kind: 'image', src: url, width, height, scale: Math.round(scale * 100) / 100, source };
+  return addElement(e);
+}
+
 export function addText(text: string, font: FontId, size: number, color: string) {
   const rtl = isRtlText(text);
   const e: TextElement = {

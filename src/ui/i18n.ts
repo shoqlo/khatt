@@ -71,6 +71,7 @@ const en = {
   createDraft: 'Create the draft', making: 'Making scene', draftReady: 'Your draft is ready. Tap any drawing to change or replace it.',
   scriptEmpty: 'Write or paste a script first.', newProjectNote: 'This creates a new project; your current one stays in My projects.',
   sourcePixabay: 'Pixabay', pixabayCredit: 'Images from Pixabay (free to use in your videos)',
+  sourceUnsplash: 'Unsplash', sourcePexels: 'Pexels', unsplashCredit: 'Photos from Unsplash', pexelsCredit: 'Photos provided by Pexels', photosOnlyNote: 'Photos (no drawings): they are sketched first, then coloured in.',
   approx: 'about', secondsShort: 'sec', orManual: 'or start with an empty board', watch: 'Watch',
 };
 
@@ -145,6 +146,7 @@ const ar: typeof en = {
   createDraft: 'اصنع المسودة', making: 'جارٍ صنع المشهد', draftReady: 'المسودة جاهزة. اضغط على أي رسم لتغييره أو استبداله.',
   scriptEmpty: 'اكتب النص أو الصقه أولاً.', newProjectNote: 'سيُنشأ مشروع جديد؛ مشروعك الحالي يبقى في «مشاريعي».',
   sourcePixabay: 'Pixabay', pixabayCredit: 'صور من Pixabay (مجانية للاستخدام في فيديوهاتك)',
+  sourceUnsplash: 'Unsplash', sourcePexels: 'Pexels', unsplashCredit: 'صور من Unsplash', pexelsCredit: 'صور مقدمة من Pexels', photosOnlyNote: 'صور فوتوغرافية (ليست رسومات): تُرسم كخطوط أولاً ثم تُلوَّن.',
   approx: 'حوالي', secondsShort: 'ث', orManual: 'أو ابدأ بلوحة فارغة', watch: 'شاهد',
 };
 

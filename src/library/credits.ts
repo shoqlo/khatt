@@ -19,6 +19,9 @@ export function projectCredits(p: Project, sets: LibSet[]): string[] {
       }
     } else if ((s.provider === 'openverse' || s.provider === 'wikimedia') && !isFree(s.license)) {
       lines.add(s.attribution || `${s.id} by ${s.author ?? 'unknown'}, ${s.license}`);
+    } else if (s.provider === 'unsplash' || s.provider === 'pexels') {
+      // Their licences don't require it, but both services ask apps to credit the photographer.
+      lines.add(s.attribution || `Photo by ${s.author ?? 'unknown'} on ${s.provider === 'unsplash' ? 'Unsplash' : 'Pexels'}`);
     }
   }
   return [...lines];

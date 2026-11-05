@@ -4,7 +4,7 @@
 // attribution text the licence needs.
 import { hasArabic, toEnglishQuery } from './glossary';
 
-export type Provider = 'openverse' | 'wikimedia' | 'pixabay';
+export type Provider = 'openverse' | 'wikimedia' | 'pixabay' | 'unsplash' | 'pexels';
 
 export interface OnlineHit {
   provider: Provider;
@@ -18,6 +18,13 @@ export interface OnlineHit {
   pageUrl: string;
   attribution: string;    // ready to paste into a video description
   download: string[];     // URLs to try, best first
+  creatorUrl?: string;
+  /** Unsplash: the photo must be used from this link (hotlinking), not saved on the device */
+  hotlink?: string;
+  /** Unsplash: ask this link when the photo is used (its download tracking) */
+  trackUrl?: string;
+  width?: number;
+  height?: number;
 }
 
 export interface OnlineResult { hits: OnlineHit[]; more: boolean; searchedAs: string; unknown: string[] }
@@ -71,7 +78,7 @@ export async function searchPixabay(q: string, page: number, drawingsOnly: boole
   // Pixabay has no Arabic search, so Arabic words are translated first.
   const { text, unknown } = query(q, dict);
   if (!text || !proxy) return { hits: [], more: false, searchedAs: text, unknown };
-  const u = new URL(`${proxy}/search`);
+  const u = new URL(`${proxy}/pixabay/search`);
   u.searchParams.set('q', text);
   u.searchParams.set('type', drawingsOnly ? 'illustration' : 'all');
   u.searchParams.set('page', String(page));
@@ -80,10 +87,36 @@ export async function searchPixabay(q: string, page: number, drawingsOnly: boole
     provider: 'pixabay', id: String(h.id), title: h.title || 'Pixabay', thumb: h.previewURL, isSvg: false,
     creator: h.user || 'Pixabay', license: 'Pixabay Content License', licenseUrl: 'https://pixabay.com/service/license-summary/',
     pageUrl: h.pageURL, attribution: `Image by ${h.user} from Pixabay`,
-    download: [`${proxy}/image?id=${h.id}`],
+    download: [`${proxy}/pixabay/image?id=${h.id}`],
   } satisfies OnlineHit));
   return { hits, more: hits.length >= 30 && page < 10, searchedAs: text, unknown };
 }
+
+// ---------------- Unsplash and Pexels (photos; through the same middleman) ----------------
+interface PhotoHit { id: string | number; title: string; user: string; userURL?: string; pageURL: string; previewURL: string; imageURL?: string; width: number; height: number }
+
+async function photoSearch(service: 'unsplash' | 'pexels', q: string, page: number, proxy: string, dict: Record<string, string>, fetchImpl: typeof fetch): Promise<OnlineResult> {
+  const { text, unknown } = query(q, dict);
+  if (!text || !proxy) return { hits: [], more: false, searchedAs: text, unknown };
+  const u = new URL(`${proxy}/${service}/search`);
+  u.searchParams.set('q', text);
+  u.searchParams.set('page', String(page));
+  const json = await getJson(u.toString(), fetchImpl);
+  const name = service === 'unsplash' ? 'Unsplash' : 'Pexels';
+  const hits: OnlineHit[] = (json.hits ?? []).map((h: PhotoHit) => ({
+    provider: service, id: String(h.id), title: h.title || name, thumb: h.previewURL, isSvg: false,
+    creator: h.user || name, creatorUrl: h.userURL, pageUrl: h.pageURL, width: h.width, height: h.height,
+    license: `${name} License`, licenseUrl: service === 'unsplash' ? 'https://unsplash.com/license' : 'https://www.pexels.com/license/',
+    attribution: `Photo by ${h.user} on ${name}`,
+    // Unsplash's rules: show photos from Unsplash's own link and report each use; Pexels photos may be saved.
+    ...(service === 'unsplash'
+      ? { download: [], hotlink: h.imageURL, trackUrl: `${proxy}/unsplash/download?id=${encodeURIComponent(String(h.id))}` }
+      : { download: [`${proxy}/pexels/image?id=${h.id}`] }),
+  } satisfies OnlineHit));
+  return { hits, more: hits.length >= 30 && page < 10, searchedAs: text, unknown };
+}
+export const searchUnsplash = (q: string, page: number, proxy: string, dict: Record<string, string> = {}, fetchImpl: typeof fetch = fetch) => photoSearch('unsplash', q, page, proxy, dict, fetchImpl);
+export const searchPexels = (q: string, page: number, proxy: string, dict: Record<string, string> = {}, fetchImpl: typeof fetch = fetch) => photoSearch('pexels', q, page, proxy, dict, fetchImpl);
 
 // ---------------- Wikimedia Commons ----------------
 const ALLOWED = /^(cc0|cc zero|public domain|pd|pdm|cc[- ]by[- ]?\d(\.\d)?|cc by \d(\.\d)?)/i;

@@ -125,8 +125,8 @@ export function openWizard() {
         if (!opts.online || !navigator.onLine || !k.english.length) return null;
         try {
           // Pixabay first when the app's middleman is set up (better illustrations), else Wikimedia.
-          const px = appConfig().pixabayProxy;
-          const r = px ? await searchPixabay(k.english[0], 1, true, px, lib.dict) : await searchCommons(k.english[0], 0, true, lib.dict);
+          const cfg = appConfig();
+          const r = cfg.services.pixabay ? await searchPixabay(k.english[0], 1, true, cfg.middleman, lib.dict) : await searchCommons(k.english[0], 0, true, lib.dict);
           for (const hit of r.hits.slice(0, 4)) {
             if (used.has(hit.id)) continue;
             try {

@@ -68,3 +68,20 @@ describe('download', () => {
     await expect(downloadHit(hit, allBlocked)).rejects.toBeInstanceOf(OnlineError);
   });
 });
+
+describe('Unsplash and Pexels (through the middleman)', () => {
+  const sample = { hits: [{ id: 'Ab3_x9', title: 'camel', user: 'Layla', userURL: 'https://unsplash.com/@layla?utm_source=khatt', pageURL: 'https://unsplash.com/photos/Ab3_x9', previewURL: 'https://images.unsplash.com/s.jpg', imageURL: 'https://images.unsplash.com/r.jpg', width: 4000, height: 3000 }] };
+  it('Unsplash photos are used from Unsplash links and each use is reported', async () => {
+    const { searchUnsplash } = await import('../src/library/online');
+    const seen: string[] = [];
+    const r = await searchUnsplash('جمل', 1, 'https://mm.example', { 'جمل': 'camel' }, fakeFetch(sample, seen));
+    expect(seen[0]).toBe('https://mm.example/unsplash/search?q=camel&page=1');
+    expect(r.hits[0]).toMatchObject({ provider: 'unsplash', hotlink: 'https://images.unsplash.com/r.jpg', trackUrl: 'https://mm.example/unsplash/download?id=Ab3_x9', download: [], attribution: 'Photo by Layla on Unsplash' });
+  });
+  it('Pexels photos are saved through the middleman with photographer credit', async () => {
+    const { searchPexels } = await import('../src/library/online');
+    const r = await searchPexels('palm', 1, 'https://mm.example', {}, fakeFetch({ hits: [{ ...sample.hits[0], id: 99, user: 'Omar' }] }));
+    expect(r.hits[0]).toMatchObject({ provider: 'pexels', download: ['https://mm.example/pexels/image?id=99'], attribution: 'Photo by Omar on Pexels' });
+    expect(r.hits[0].hotlink).toBeUndefined();
+  });
+});

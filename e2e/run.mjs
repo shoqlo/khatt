@@ -138,7 +138,7 @@ const browser = await chromium.launch({ args: ['--use-fake-ui-for-media-stream',
   await page.locator('#library input[type=search]').fill('جمل');
   await page.locator('#library form button[type=submit]').tap();
   await page.waitForSelector('#library .thumb');
-  const searched = await page.locator('#library .note').nth(1).textContent();
+  const searched = await page.locator('#library .note', { hasText: 'تم البحث عن' }).first().textContent();
   check('phone: open-image search translates Arabic', /camel/.test(searched || ''), searched);
   await page.locator('#library .thumb').nth(1).tap(); // blocked host -> clear message, falls back to thumbnail first?
   await page.waitForTimeout(800);
@@ -442,7 +442,7 @@ const browser = await chromium.launch({ args: ['--use-fake-ui-for-media-stream',
 }
 
 // =====================================================================
-// PIXABAY through the app's middleman (fake middleman; proves the app side)
+// PIXABAY / UNSPLASH / PEXELS through the app's middleman (fake middleman; proves the app side)
 // =====================================================================
 {
   const ctx = await browser.newContext({ ...devices['Pixel 7'], locale: 'ar' });
@@ -452,28 +452,60 @@ const browser = await chromium.launch({ args: ['--use-fake-ui-for-media-stream',
   const png = await (async () => { await page.goto('about:blank'); return makePng(page); })();
   const asked = [];
   const cors = { 'access-control-allow-origin': '*' };
-  await ctx.route('**/config.json', (r) => r.fulfill({ headers: { 'content-type': 'application/json' }, body: JSON.stringify({ pixabayProxy: 'https://px.example' }) }));
+  const jsonRes = (r, body) => r.fulfill({ headers: { ...cors, 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  await ctx.route('**/config.json', (r) => r.fulfill({ headers: { 'content-type': 'application/json' }, body: JSON.stringify({ middleman: 'https://px.example' }) }));
   await ctx.route('https://px.example/**', (r) => {
-    const u = r.request().url();
-    asked.push(u);
-    if (u.includes('/search')) return r.fulfill({ headers: { ...cors, 'content-type': 'application/json' }, body: JSON.stringify({ total: 1, hits: [{ id: 7, title: 'camel', user: 'artist', pageURL: 'https://pixabay.com/x-7/', previewURL: 'https://px.example/preview/7.png', width: 640, height: 480, type: 'illustration' }] }) });
+    const u = new URL(r.request().url());
+    asked.push(u.pathname + u.search);
+    if (u.pathname === '/') return jsonRes(r, { ok: true, services: { pixabay: true, unsplash: true, pexels: true } });
+    if (u.pathname === '/pixabay/search') return jsonRes(r, { total: 1, hits: [{ id: 7, title: 'camel', user: 'artist', pageURL: 'https://pixabay.com/x-7/', previewURL: 'https://px.example/preview/7.png', width: 640, height: 480, type: 'illustration' }] });
+    if (u.pathname === '/unsplash/search') return jsonRes(r, { total: 1, hits: [{ id: 'Ab3_x9', title: 'camel in desert', user: 'Layla', userURL: 'https://unsplash.com/@layla', pageURL: 'https://unsplash.com/photos/Ab3_x9', previewURL: 'https://images.unsplash.example/s.png', imageURL: 'https://images.unsplash.example/r.png', width: 400, height: 300 }] });
+    if (u.pathname === '/unsplash/download') return jsonRes(r, { ok: true });
+    if (u.pathname === '/pexels/search') return jsonRes(r, { total: 1, hits: [{ id: 99, title: 'palm tree', user: 'Omar', userURL: 'https://www.pexels.com/@omar', pageURL: 'https://www.pexels.com/photo/99/', previewURL: 'https://px.example/preview/99.png', width: 400, height: 300 }] });
     return r.fulfill({ headers: { ...cors, 'content-type': 'image/png' }, body: png });
   });
+  await ctx.route('https://images.unsplash.example/**', (r) => r.fulfill({ headers: { ...cors, 'content-type': 'image/png' }, body: png }));
   await page.goto(BASE);
   await page.waitForFunction(() => window.khatt);
   await page.locator('#bottombar [data-id=add]').tap();
   await page.locator('#tabs .tab').nth(1).tap();
-  const active = await page.locator('#library .chip.active').first().textContent();
-  check('pixabay: shown and chosen first once the middleman is set up', active === 'Pixabay', active);
+  const chips = await page.locator('#library .chips').first().locator('.chip').allTextContents();
+  check('middleman: services with keys appear first', chips.slice(0, 3).join(',') === 'Pixabay,Unsplash,Pexels' && (await page.locator('#library .chip.active').first().textContent()) === 'Pixabay', chips.join(' · '));
   await page.locator('#library input[type=search]').fill('جمل');
   await page.locator('#library form button[type=submit]').tap();
   await page.waitForSelector('#library .thumb');
-  check('pixabay: Arabic search translated, no key in the app', asked.some((u) => u.includes('/search?q=camel')) && asked.every((u) => !/key=/.test(u)), asked[0]);
+  check('pixabay: Arabic search translated, no key in the app', asked.some((u) => u.startsWith('/pixabay/search?q=camel')) && asked.every((u) => !/key=/i.test(u)), asked.find((u) => u.includes('search')));
   await page.locator('#library .thumb').first().tap();
   await page.waitForFunction(() => window.khatt.state.project.elements.length === 1, null, { timeout: 10000 });
-  const el = await page.evaluate(() => window.khatt.state.project.elements[0]);
+  let el = await page.evaluate(() => window.khatt.state.project.elements[0]);
   check('pixabay: picture saved on the device with its source', el.kind === 'image' && el.src.startsWith('asset:') && el.source.provider === 'pixabay', `${el.kind} ${el.source?.attribution}`);
-  check('pixabay: no script errors', errors.length === 0, errors.slice(0, 3).join(' | '));
+
+  // Unsplash: drawn from Unsplash's own link, use reported, photographer credited
+  await page.locator('#bottombar [data-id=add]').tap();
+  await page.locator('#library .chip', { hasText: 'Unsplash' }).tap();
+  await page.waitForSelector('#library .thumb .badge');
+  const badge = await page.locator('#library .thumb .badge').first().textContent();
+  await page.locator('#library .thumb').first().tap();
+  await page.waitForFunction(() => window.khatt.state.project.elements.length === 2, null, { timeout: 10000 });
+  el = await page.evaluate(() => window.khatt.state.project.elements[1]);
+  check('unsplash: photo used from its Unsplash link (not copied), use reported', el.src === 'https://images.unsplash.example/r.png' && asked.some((u) => u === '/unsplash/download?id=Ab3_x9'), `${el.src.slice(0, 40)}…`);
+  check('unsplash: photographer shown in results and in credits', /Layla/.test(badge) && el.source.attribution === 'Photo by Layla on Unsplash', badge);
+
+  // Pexels: saved through the middleman
+  await page.locator('#bottombar [data-id=add]').tap();
+  await page.locator('#library .chip', { hasText: 'Pexels' }).tap();
+  await page.waitForSelector('#library .thumb');
+  await page.locator('#library .thumb').first().tap();
+  await page.waitForFunction(() => window.khatt.state.project.elements.length === 3, null, { timeout: 10000 });
+  el = await page.evaluate(() => window.khatt.state.project.elements[2]);
+  check('pexels: photo saved on the device with photographer credit', el.src.startsWith('asset:') && el.source.attribution === 'Photo by Omar on Pexels' && asked.some((u) => u === '/pexels/image?id=99'));
+  await page.locator('#bottombar [data-id=export]').tap();
+  const credits = await page.locator('dialog .credits textarea').inputValue().catch(() => '');
+  check('credits for the video list the Unsplash and Pexels photographers', credits.includes('Photo by Layla on Unsplash') && credits.includes('Photo by Omar on Pexels'), credits.replace(/\n/g, ' | '));
+  await page.locator('dialog button', { hasText: 'إغلاق' }).last().tap();
+  await page.waitForTimeout(800);
+  await shot(page, 'photos-board.png');
+  check('middleman: no script errors', errors.length === 0, errors.slice(0, 3).join(' | '));
   await ctx.close();
 }
 

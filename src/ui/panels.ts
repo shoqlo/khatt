@@ -1,5 +1,5 @@
 // The "Add" panel: bundled drawings, open-image search, text, own photos, sound.
-import { state, ui, commit, softCommit, afterLoad, addSvg, addImageBlob, addText } from './app';
+import { state, ui, commit, softCommit, afterLoad, addSvg, addImageBlob, addImageUrl, addText } from './app';
 import { startRecording, blobDuration, unlockAudio, type Recording } from './sound';
 import { openSceneRecorder } from './recorder';
 import { h, field, num, range, select, add } from './dom';
@@ -10,7 +10,7 @@ import type { FontId } from '../engine/types';
 import { fitToDuration } from '../engine/timeline';
 import { putAsset } from '../storage/db';
 import { loadLibrary, searchLibrary, drawingSvg, itemLabel, type LibItem, type LibStyle } from '../library/builtin';
-import { searchOpenverse, searchCommons, searchPixabay, downloadHit, OnlineError, type OnlineHit, type Provider } from '../library/online';
+import { searchOpenverse, searchCommons, searchPixabay, searchUnsplash, searchPexels, downloadHit, OnlineError, type OnlineHit, type Provider } from '../library/online';
 import { appConfig } from '../config';
 
 const onlineMessage = (err: unknown) => err instanceof OnlineError
@@ -119,25 +119,66 @@ function drawingsTab(body: HTMLElement) {
   run();
 }
 
-// ---------------- open images (Openverse / Wikimedia Commons) ----------------
+// ---------------- open images (Pixabay / Unsplash / Pexels via the middleman; Wikimedia / Openverse keyless) ----------------
 const online = { query: '', provider: null as Provider | null, drawingsOnly: true, page: 1, offset: 0 };
+
+const CREDIT: Record<Provider, { key: Key; href: string }> = {
+  pixabay: { key: 'pixabayCredit', href: 'https://pixabay.com/' },
+  unsplash: { key: 'unsplashCredit', href: 'https://unsplash.com/?utm_source=khatt&utm_medium=referral' },
+  pexels: { key: 'pexelsCredit', href: 'https://www.pexels.com/' },
+  wikimedia: { key: 'wikimediaCredit', href: 'https://commons.wikimedia.org/' },
+  openverse: { key: 'openverseCredit', href: 'https://openverse.org/' },
+};
 
 function onlineTab(body: HTMLElement) {
   const grid = h('div', { class: 'grid photos', role: 'list' });
   const note = h('div', { class: 'note' });
   const more = h('button', { class: 'more', hidden: true, onclick: () => run(true) }, t('more'));
-  const credit = h('div', { class: 'credit' });
+  const credit = h('a', { class: 'credit', target: '_blank', rel: 'noopener' }) as HTMLAnchorElement;
+  const photoNote = h('div', { class: 'note' }, t('photosOnlyNote'));
   const drawingsToggle = h('label', { class: 'check' },
     h('input', { type: 'checkbox', checked: online.drawingsOnly, onchange: (e: Event) => { online.drawingsOnly = (e.target as HTMLInputElement).checked; run(); } }),
     t('drawingsOnly'));
 
-  // Pixabay appears (and is chosen first) only when the app's Pixabay middleman is set up.
-  const pixabay = appConfig().pixabayProxy;
-  online.provider ??= pixabay ? 'pixabay' : 'wikimedia';
-  if (online.provider === 'pixabay' && !pixabay) online.provider = 'wikimedia';
+  // Services with keys on the app's middleman appear first; Wikimedia and Openverse need no key.
+  const { middleman, services } = appConfig();
+  const sources: [Provider, Key][] = [
+    ...(services.pixabay ? [['pixabay', 'sourcePixabay'] as [Provider, Key]] : []),
+    ...(services.unsplash ? [['unsplash', 'sourceUnsplash'] as [Provider, Key]] : []),
+    ...(services.pexels ? [['pexels', 'sourcePexels'] as [Provider, Key]] : []),
+    ['wikimedia', 'sourceWikimedia'], ['openverse', 'sourceOpenverse'],
+  ];
+  if (!online.provider || !sources.some(([p]) => p === online.provider)) online.provider = sources[0][0];
   const setCredit = () => {
-    credit.textContent = online.provider === 'openverse' ? t('openverseCredit') : online.provider === 'pixabay' ? t('pixabayCredit') : t('wikimediaCredit');
-    drawingsToggle.hidden = online.provider === 'openverse';
+    const c = CREDIT[online.provider!];
+    credit.textContent = t(c.key);
+    credit.href = c.href;
+    const photos = online.provider === 'unsplash' || online.provider === 'pexels';
+    drawingsToggle.hidden = online.provider === 'openverse' || photos;
+    photoNote.hidden = !photos;
+  };
+
+  const search = async (dict: Record<string, string>) => {
+    switch (online.provider) {
+      case 'pixabay': return searchPixabay(online.query, online.page, online.drawingsOnly, middleman, dict);
+      case 'unsplash': return searchUnsplash(online.query, online.page, middleman, dict);
+      case 'pexels': return searchPexels(online.query, online.page, middleman, dict);
+      case 'openverse': return searchOpenverse(online.query, online.page, dict);
+      default: return searchCommons(online.query, online.offset, online.drawingsOnly, dict);
+    }
+  };
+
+  const use = async (hit: OnlineHit) => {
+    const source = { provider: hit.provider, id: hit.id, author: hit.creator, pageUrl: hit.pageUrl, license: hit.license, attribution: hit.attribution };
+    if (hit.hotlink) {
+      // Unsplash: report the use, then draw the photo straight from Unsplash's link.
+      if (hit.trackUrl) fetch(hit.trackUrl).catch(() => { /* reporting is best effort */ });
+      await addImageUrl(hit.title, hit.hotlink, hit.width ?? 1600, hit.height ?? 1200, source);
+      return;
+    }
+    const { blob, isSvg } = await downloadHit(hit);
+    if (isSvg) await addSvg(hit.title, await blob.text(), source);
+    else await addImageBlob(hit.title, blob, source);
   };
 
   const run = async (append = false) => {
@@ -147,11 +188,7 @@ function onlineTab(body: HTMLElement) {
     note.textContent = '…';
     try {
       const { dict } = await loadLibrary();
-      const r = online.provider === 'pixabay'
-        ? await searchPixabay(online.query, online.page, online.drawingsOnly, pixabay, dict)
-        : online.provider === 'openverse'
-        ? await searchOpenverse(online.query, online.page, dict)
-        : await searchCommons(online.query, online.offset, online.drawingsOnly, dict);
+      const r = await search(dict);
       online.page++; online.offset += 24;
       const parts = [];
       if (r.searchedAs && r.searchedAs !== online.query.trim()) parts.push(`${t('searchedAs')}: ${r.searchedAs}`);
@@ -164,19 +201,16 @@ function onlineTab(body: HTMLElement) {
           const btn = e.currentTarget as HTMLButtonElement;
           btn.disabled = true;
           const busy = toast(t('downloading'), 'info', 0);
-          try {
-            const { blob, isSvg } = await downloadHit(hit);
-            const source = { provider: hit.provider, id: hit.id, author: hit.creator, pageUrl: hit.pageUrl, license: hit.license, attribution: hit.attribution };
-            if (isSvg) await addSvg(hit.title, await blob.text(), source);
-            else await addImageBlob(hit.title, blob, source);
-          } catch (err) { toast(onlineMessage(err), 'error', 7000); } finally { busy.remove(); btn.disabled = false; }
+          try { await use(hit); } catch (err) { toast(onlineMessage(err), 'error', 7000); } finally { busy.remove(); btn.disabled = false; }
         },
-      }, h('img', { src: hit.thumb, alt: hit.title, loading: 'lazy', referrerpolicy: 'no-referrer' }), h('span', { class: 'badge' }, hit.license))));
+      },
+        h('img', { src: hit.thumb, alt: hit.title, loading: 'lazy', referrerpolicy: 'no-referrer' }),
+        // Photo services ask apps to show who took the photo.
+        h('span', { class: 'badge' }, hit.provider === 'unsplash' || hit.provider === 'pexels' ? `📷 ${hit.creator}` : hit.license))));
       more.hidden = !r.more;
     } catch (err) { note.textContent = onlineMessage(err); }
   };
 
-  const sources: [Provider, Key][] = [...(pixabay ? [['pixabay', 'sourcePixabay'] as [Provider, Key]] : []), ['wikimedia', 'sourceWikimedia'], ['openverse', 'sourceOpenverse']];
   const srcChips = h('div', { class: 'chips' });
   const renderSrc = () => srcChips.replaceChildren(...sources.map(([p, k]) => h('button', {
     class: online.provider === p ? 'chip active' : 'chip', 'aria-pressed': String(online.provider === p),
@@ -187,7 +221,7 @@ function onlineTab(body: HTMLElement) {
     h('form', { class: 'row', onsubmit: (e: Event) => { e.preventDefault(); run(); } },
       h('input', { type: 'search', dir: 'auto', enterkeyhint: 'search', placeholder: t('searchOnline'), value: online.query, 'aria-label': t('searchOnline'), oninput: (e: Event) => { online.query = (e.target as HTMLInputElement).value; } }),
       h('button', { type: 'submit', class: 'primary', 'aria-label': 'search' }, '⌕')),
-    srcChips, drawingsToggle,
+    srcChips, drawingsToggle, photoNote,
     h('div', { class: 'note' }, t('onlineHint')),
     note, grid, more, credit,
   );
