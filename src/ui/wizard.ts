@@ -10,8 +10,9 @@ import { prepare } from '../engine/prepare';
 import { getFont } from '../engine/fonts';
 import { layoutText } from '../engine/text';
 import { putAsset, resolveUrl } from '../storage/db';
-import { loadLibrary, searchLibrary, drawingSvg, itemLabel, type LibStyle } from '../library/builtin';
+import { loadLibrary, type LibStyle } from '../library/builtin';
 import { searchCommons, downloadHit } from '../library/online';
+import { libraryCandidates } from '../generator/pick';
 
 const opts = {
   script: '',
@@ -118,44 +119,28 @@ export function openWizard() {
     try {
       const lib = await loadLibrary();
       const styleFor = (scene: number): LibStyle | null => opts.style === 'mixed' ? null : opts.style;
-      const findDrawing = async (k: Keyword, scene: number, used: Set<string>): Promise<DrawingPick | null> => {
-        const queries = [k.word, ...k.english].filter(Boolean);
-        // Pass 1 avoids anything already drawn in this video (even from another set); pass 2 allows it.
-        for (const fresh of [true, false]) for (const style of [styleFor(scene), null]) {
-          for (const q of queries) {
-            const r = await searchLibrary(q, { style, limit: 12 });
-            const item = r.items.find((it) => !used.has(`${it.set}:${it.name}`) && (!fresh || !used.has(`name:${it.name}`)));
-            if (!item) continue;
-            used.add(`${item.set}:${item.name}`);
-            used.add(`name:${item.name}`);
-            const set = lib.sets[item.set];
-            return {
-              isSvg: true, svg: await drawingSvg(item), name: itemLabel(item, getLang()), style: set.style,
-              source: { provider: 'library', id: `${set.id}:${item.name}`, set: set.id, author: set.author, license: set.license },
-            };
+      const candidate = libraryCandidates(lib, styleFor, getLang(), opts.type === 'story');
+      const online = async (k: Keyword, used: Set<string>): Promise<DrawingPick | null> => {
+        if (!opts.online || !navigator.onLine || !k.english.length) return null;
+        try {
+          const r = await searchCommons(k.english[0], 0, true, lib.dict);
+          for (const hit of r.hits.slice(0, 4)) {
+            if (used.has(hit.id)) continue;
+            try {
+              const { blob, isSvg } = await downloadHit(hit);
+              used.add(hit.id);
+              const source = { provider: hit.provider, id: hit.id, author: hit.creator, pageUrl: hit.pageUrl, license: hit.license, attribution: hit.attribution };
+              return isSvg ? { isSvg: true, svg: await blob.text(), name: hit.title, source } : { isSvg: false, blob, name: hit.title, source };
+            } catch { /* try the next one */ }
           }
-          if (!styleFor(scene)) break;
-        }
-        if (opts.online && navigator.onLine && k.english.length) {
-          try {
-            const r = await searchCommons(k.english[0], 0, true, lib.dict);
-            for (const hit of r.hits.slice(0, 4)) {
-              if (used.has(hit.id)) continue;
-              try {
-                const { blob, isSvg } = await downloadHit(hit);
-                used.add(hit.id);
-                const source = { provider: hit.provider, id: hit.id, author: hit.creator, pageUrl: hit.pageUrl, license: hit.license, attribution: hit.attribution };
-                return isSvg ? { isSvg: true, svg: await blob.text(), name: hit.title, source } : { isSvg: false, blob, name: hit.title, source };
-              } catch { /* try the next one */ }
-            }
-          } catch { /* offline or rate-limited: the built-in library result (none) stands */ }
-        }
+        } catch { /* offline or rate-limited */ }
         return null;
       };
       const project = await generateProject(
         { script: opts.script, type: opts.type, aspect: opts.aspect, style: opts.style, photos: opts.photos },
         {
-          findDrawing,
+          candidate,
+          online,
           dict: lib.dict,
           measure: async (el: BoardElement) => { const p = await prepare(el); return { w: p.w, h: p.h }; },
           fitText,

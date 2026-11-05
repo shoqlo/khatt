@@ -3,7 +3,7 @@
 // frame-sized cell of the board, and time it from reading speed. Everything it makes is a
 // normal, editable project.
 import { newProject, newScene, uid, frameOf, FRAMES, type Aspect, type BoardElement, type FontId, type Project, type SvgElement, type TextElement, type ImageElement, type AssetSource } from '../engine/types';
-import { normalizeArabic, hasArabic, arabicCandidates, translateArabicWord } from '../library/glossary';
+import { normalizeArabic, hasArabic, arabicCandidates, translateArabicWord, inGlossary, inGlossaryExact } from '../library/glossary';
 
 export type VideoType = 'lesson' | 'explainer' | 'story' | 'promo';
 export type StyleChoice = 'hand' | 'line' | 'colour' | 'mixed';
@@ -53,13 +53,17 @@ export function keyPhrase(text: string, maxWords = 9): string {
   return w.length <= maxWords ? first : `${w.slice(0, maxWords).join(' ')}…`;
 }
 
-export interface Keyword { word: string; english: string[]; arabic: string[] }
+export interface Keyword {
+  word: string; english: string[]; arabic: string[];
+  /** how much to trust a picture found for this word: checked glossary and nouns up, likely verbs down */
+  prior: number;
+}
 
 /** Content words worth illustrating, in order of appearance, with their English search terms. */
 export function keywords(text: string, dict: Record<string, string> = {}): Keyword[] {
   const seen = new Set<string>();
   const out: Keyword[] = [];
-  for (const raw of text.split(/[\s،,.!?؟؛:()«»"'\-–—]+/u)) {
+  for (let raw of text.split(/[\s،,.!?؟؛:()«»"'\-–—]+/u)) {
     if (!raw) continue;
     if (hasArabic(raw)) {
       const n = normalizeArabic(raw);
@@ -68,12 +72,20 @@ export function keywords(text: string, dict: Record<string, string> = {}): Keywo
       const key = stems[stems.length > 1 ? 1 : 0];
       if (seen.has(key)) continue;
       seen.add(key);
-      out.push({ word: raw, english: translateArabicWord(raw, dict), arabic: stems });
+      // و/ف/ب/ك/ل joined to a checked word: search the word itself ("بطريق" = "by the road" here, not "penguin").
+      const bare = /^[وفبكل]/.test(n) && n.length > 3 && inGlossaryExact(n.slice(1)) && !inGlossaryExact(n) ? raw.slice(1) : null;
+      if (bare) raw = bare;
+      const glossary = inGlossary(raw);
+      // "ال" (the), with or without a joined و/ف/ب/ك/ل, or tanween at the end: almost certainly a noun.
+      const noun = /^(و|ف|ب|ك|ل)?ال/.test(n) || /[\u064B-\u064D]$/.test(raw.replace(/[\u0640]/g, ''));
+      // Present-tense verbs start with ي/ت/ن/أ (يطير، تعيش): they rarely make good pictures.
+      const verbish = !glossary && !noun && /^[يتنأا]/.test(n) && n.length >= 4 && n.length <= 6;
+      out.push({ word: raw, english: translateArabicWord(raw, dict), arabic: stems, prior: (glossary ? 1 : 0) + (noun ? 0.5 : 0) - (verbish ? 1.5 : 0) });
     } else {
       const w = raw.toLowerCase().replace(/[^a-z0-9]/g, '');
       if (w.length < 3 || EN_STOP.has(w) || seen.has(w)) continue;
       seen.add(w);
-      out.push({ word: raw, english: [w, w.endsWith('s') ? w.slice(0, -1) : ''].filter(Boolean), arabic: [] });
+      out.push({ word: raw, english: [w, w.endsWith('s') ? w.slice(0, -1) : ''].filter(Boolean), arabic: [], prior: 0 });
     }
   }
   // Words we can translate/illustrate first, keeping script order otherwise.
@@ -150,9 +162,14 @@ export function timeScene(els: BoardElement[], seconds: number, firstInVideo: bo
 // ---------------- generation (browser) ----------------
 export interface DrawingPick { svg?: string; blob?: Blob; isSvg: boolean; name: string; source: AssetSource; style?: 'hand' | 'line' | 'colour' }
 
+/** A possible picture for a key word; nothing is used until take() is called. */
+export interface DrawingCandidate { score: number; name: string; take: () => Promise<DrawingPick> }
+
 export interface GeneratorDeps {
-  /** find a drawing for a keyword (built-in library, optionally the internet) */
-  findDrawing: (k: Keyword, scene: number, used: Set<string>) => Promise<DrawingPick | null>;
+  /** best built-in drawing for a key word, with its match strength (see searchLibrary scores) */
+  candidate: (k: Keyword, scene: number, used: Set<string>) => Promise<DrawingCandidate | null>;
+  /** optional: a picture from the internet when the built-in library has nothing good */
+  online?: (k: Keyword, used: Set<string>) => Promise<DrawingPick | null>;
   /** size of a prepared element (for fitting into its slot) */
   measure: (el: BoardElement) => Promise<{ w: number; h: number }>;
   /** wrap text into lines that fit a width at a size; returns the laid-out text and its size */
@@ -171,6 +188,10 @@ export interface ScriptOptions {
   photos: Blob[];
   title?: string;
 }
+
+/** Minimum match strength (search score + word trust) to put a picture in a scene. */
+export const FIRST_PICTURE = 2.75;
+export const SECOND_PICTURE = 3.5;
 
 const FONT_FOR: Record<VideoType, FontId> = { lesson: 'amiri-bold', explainer: 'cairo', story: 'amiri', promo: 'cairo' };
 
@@ -217,14 +238,29 @@ export async function generateProject(o: ScriptOptions, deps: GeneratorDeps): Pr
 
     // Pictures: a drawing for the strongest key word, a photo of the user's if given, else a second drawing
     const pics: BoardElement[] = [];
-    const kws = keywords(text, deps.dict);
+    const kws = keywords(text, deps.dict).slice(0, 10);
     const want = o.type === 'story' || o.aspect === 'square' ? 1 : 2;
     const photo = o.photos[i];
-    for (const k of kws) {
+    // Compare every key word's best drawing and keep the strongest, not just the first word that matches.
+    const pool: { c: DrawingCandidate; total: number; order: number }[] = [];
+    for (const [order, k] of kws.entries()) {
+      const c = await deps.candidate(k, i, used);
+      if (c) pool.push({ c, total: c.score + k.prior, order });
+    }
+    pool.sort((a, b) => b.total - a.total || a.order - b.order);
+    const names = new Set<string>();
+    for (const x of pool) {
       if (pics.length >= (photo ? 1 : want)) break;
-      const pick = await deps.findDrawing(k, i, used);
-      if (!pick) continue;
-      pics.push(await toElement(pick, base, deps));
+      if (x.total < (pics.length ? SECOND_PICTURE : FIRST_PICTURE)) break; // weak matches are worse than no picture
+      if (names.has(x.c.name)) continue;
+      names.add(x.c.name);
+      pics.push(await toElement(await x.c.take(), base, deps));
+    }
+    if (!pics.length && !photo && deps.online) {
+      for (const k of kws.slice(0, 4)) {
+        const pick = await deps.online(k, used);
+        if (pick) { pics.push(await toElement(pick, base, deps)); break; }
+      }
     }
     if (photo) {
       const stored = await deps.storeImage(photo, `photo ${i + 1}`);
