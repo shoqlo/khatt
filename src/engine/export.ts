@@ -8,11 +8,14 @@ import { Muxer as WebmMuxer, ArrayBufferTarget as WebmTarget } from 'webm-muxer'
 import { GIFEncoder, quantize, applyPalette } from 'gifenc';
 import type { Project } from './types';
 import { renderFrame } from './render';
-import { prepareAll } from './prepare';
+import { prepareAll, setInk } from './prepare';
+import { boardInk } from './board';
 import { schedule } from './timeline';
 import { audioClips, sceneCaptions } from './scenes';
 import type { CustomHand } from './hand';
 import { resolveUrl } from '../storage/db';
+import { musicLoop, musicStyleOf } from './music';
+import { duckPoints, scheduleClip } from './mixer';
 
 export type ExportFormat = 'mp4' | 'webm' | 'gif';
 export type ExportMethod = 'webcodecs' | 'realtime' | 'gif';
@@ -49,6 +52,7 @@ export async function planExport(p: Project, format: ExportFormat): Promise<{ me
 }
 
 export async function exportVideo(p: Project, o: ExportOptions): Promise<ExportResult> {
+  setInk(boardInk(p));
   await prepareAll(p.elements);
   const plan = o.forceMethod ? { method: o.forceMethod, silent: false } : await planExport(p, o.format);
   if (plan.method === 'gif') return exportGif(p, o);
@@ -91,16 +95,12 @@ export async function renderMix(p: Project, duration: number, sampleRate = 48000
   const clips = audioClips(p);
   if (!clips.length) return null;
   const ctx = new OfflineAudioContext(2, Math.max(1, Math.ceil(duration * sampleRate)), sampleRate);
+  const duck = duckPoints(clips);
   for (const c of clips) {
     if (c.start >= duration) continue;
-    const bytes = await (await fetch(await resolveUrl(c.src))).arrayBuffer();
-    const decoded = await ctx.decodeAudioData(bytes);
-    const node = ctx.createBufferSource();
-    node.buffer = decoded;
-    const gain = ctx.createGain();
-    gain.gain.value = c.volume;
-    node.connect(gain).connect(ctx.destination);
-    node.start(c.start);
+    const style = musicStyleOf(c.src);
+    const buf = style ? await musicLoop(style) : await ctx.decodeAudioData(await (await fetch(await resolveUrl(c.src))).arrayBuffer());
+    scheduleClip(ctx, buf, c, 0, 0, duck);
   }
   return ctx.startRendering();
 }

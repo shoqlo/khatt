@@ -1,10 +1,18 @@
 // Original hand + marker artwork, drawn in code (no third-party assets).
 // The pen tip is at (0,0); the hand extends down-right (or down-left when mirrored).
-import type { HandId } from './types';
+import type { HandId, HandTone } from './types';
 
 export interface CustomHand { image: CanvasImageSource; tipX: number; tipY: number; scale: number }
 
-export function drawHand(ctx: CanvasRenderingContext2D, id: HandId, x: number, y: number, size: number, custom?: CustomHand | null) {
+const SKIN: Record<HandTone, [string, string]> = {
+  light: ['#f6d4bb', '#c99a7a'],
+  medium: ['#e9b48f', '#a8714f'],
+  tan: ['#c68c62', '#8a5a39'],
+  dark: ['#8a5838', '#5a3721'],
+};
+
+export function drawHand(ctx: CanvasRenderingContext2D, id: HandId, x: number, y: number, size: number, custom?: CustomHand | null,
+  opts: { tone?: HandTone; tool?: 'marker' | 'chalk' } = {}) {
   if (id === 'none') return;
   ctx.save();
   ctx.translate(x, y);
@@ -18,20 +26,28 @@ export function drawHand(ctx: CanvasRenderingContext2D, id: HandId, x: number, y
   ctx.scale(id === 'marker-left' ? -s : s, s);
   ctx.lineJoin = 'round';
   ctx.lineCap = 'round';
-  // marker body
   ctx.save();
   ctx.rotate(-0.62);
-  ctx.fillStyle = '#2b2b2b';
-  ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(4, 10); ctx.lineTo(-4, 10); ctx.closePath(); ctx.fill();
-  ctx.fillStyle = '#e8e8e8'; ctx.strokeStyle = '#555'; ctx.lineWidth = 1.5;
-  roundRect(ctx, -7, 10, 14, 16, 2); ctx.fill(); ctx.stroke();
-  ctx.fillStyle = '#1d6fd6';
-  roundRect(ctx, -9, 26, 18, 120, 5); ctx.fill(); ctx.strokeStyle = '#124a91'; ctx.stroke();
-  ctx.fillStyle = 'rgba(255,255,255,.35)'; roundRect(ctx, -6, 30, 4, 110, 2); ctx.fill();
+  if (opts.tool === 'chalk') {
+    // a stick of chalk, slightly worn at the tip
+    ctx.fillStyle = '#f4f2ea'; ctx.strokeStyle = '#c9c4b5'; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.moveTo(-5, 0); ctx.lineTo(5, 0); ctx.lineTo(8, 90); ctx.lineTo(-8, 90); ctx.closePath(); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = 'rgba(0,0,0,.06)'; ctx.fillRect(2, 8, 4, 78);
+  } else {
+    // marker body
+    ctx.fillStyle = '#2b2b2b';
+    ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(4, 10); ctx.lineTo(-4, 10); ctx.closePath(); ctx.fill();
+    ctx.fillStyle = '#e8e8e8'; ctx.strokeStyle = '#555'; ctx.lineWidth = 1.5;
+    roundRect(ctx, -7, 10, 14, 16, 2); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = '#1d6fd6';
+    roundRect(ctx, -9, 26, 18, 120, 5); ctx.fill(); ctx.strokeStyle = '#124a91'; ctx.stroke();
+    ctx.fillStyle = 'rgba(255,255,255,.35)'; roundRect(ctx, -6, 30, 4, 110, 2); ctx.fill();
+  }
   ctx.restore();
   if (id !== 'pen-only') {
-    // stylised hand gripping the marker
-    ctx.fillStyle = '#e9b48f'; ctx.strokeStyle = '#a8714f'; ctx.lineWidth = 2;
+    // stylised hand gripping the marker / chalk
+    const [skin, line] = SKIN[opts.tone ?? 'medium'];
+    ctx.fillStyle = skin; ctx.strokeStyle = line; ctx.lineWidth = 2;
     ctx.beginPath();
     ctx.moveTo(18, 18);
     ctx.bezierCurveTo(30, 14, 44, 22, 48, 34);   // index finger top

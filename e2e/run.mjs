@@ -127,7 +127,7 @@ const browser = await chromium.launch({ args: ['--use-fake-ui-for-media-stream',
 
   // Own photo
   await page.locator('#bottombar [data-id=add]').tap();
-  await page.locator('#tabs .tab').nth(3).tap();
+  await page.locator('#tabs .tab').nth(4).tap();
   await page.locator('#photo-input').setInputFiles(path.join(OUT, 'house.png'));
   await page.waitForFunction(() => window.khatt.state.project.elements.length === 4, null, { timeout: 10000 });
   check('phone: photo stored on the device (not a server)', await k(() => window.khatt.state.project.elements[3].src.startsWith('asset:')));
@@ -212,7 +212,7 @@ const browser = await chromium.launch({ args: ['--use-fake-ui-for-media-stream',
 
   // Voice-over + fit timing
   await page.locator('#bottombar [data-id=add]').tap();
-  await page.locator('#tabs .tab').nth(4).tap();
+  await page.locator('#tabs .tab').nth(5).tap();
   await page.locator('#audio-input').setInputFiles(path.join(OUT, 'voice.wav'));
   await page.waitForFunction(() => !!window.khatt.state.project.audio, null, { timeout: 10000 });
   await page.locator('#library button', { hasText: 'اضبط التوقيت على طول الصوت' }).tap();
@@ -320,9 +320,11 @@ const browser = await chromium.launch({ args: ['--use-fake-ui-for-media-stream',
   await page.locator('dialog.wizard textarea').fill(script);
   const stats = await page.locator('dialog.wizard .note').first().textContent();
   check('script: wizard counts scenes and estimates length', /^3 مشاهد · حوالي \d+ ث$/.test(stats.trim()), stats);
-  await page.locator('dialog.wizard .chip', { hasText: 'إعلان' }).tap();
+  await page.locator('dialog.wizard .chip', { hasText: /^إعلان$/ }).tap();
   await page.locator('dialog.wizard .chip', { hasText: 'عمودي' }).tap();
   await page.locator('dialog.wizard .chip', { hasText: 'ملوّن' }).tap();
+  // No music here: the sound checks below look for silence between the voices.
+  await page.locator('dialog.wizard .chip', { hasText: 'بدون موسيقى' }).tap();
   await shot(page, 'script-01-wizard.png');
   const t0 = Date.now();
   await page.locator('dialog.wizard button.primary.big').tap();
@@ -552,6 +554,102 @@ const browser = await chromium.launch({ args: ['--use-fake-ui-for-media-stream',
   check('installable as an app (Chrome installability check)', installErrors.length === 0, JSON.stringify(installErrors));
   const manifest = await (await page.request.get(new URL('manifest.webmanifest', BASE).href)).json();
   check('manifest: Arabic, right-to-left, standalone, maskable icon', manifest.dir === 'rtl' && manifest.lang === 'ar' && manifest.display === 'standalone' && manifest.icons.some((i) => i.purpose === 'maskable'));
+  await ctx.close();
+}
+
+// =====================================================================
+// PHONE: VideoScribe-style extras — ready scripts, board looks, charts, animations, music
+// =====================================================================
+{
+  const ctx = await browser.newContext({ ...devices['Pixel 7'], locale: 'ar', acceptDownloads: true });
+  const page = await ctx.newPage();
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(String(e)));
+  page.on('console', (m) => { if (m.type() === 'error' && !/Failed to load resource|net::ERR|CORS policy/.test(m.text())) errors.push(m.text()); });
+  const k = (fn, arg) => page.evaluate(fn, arg);
+  await page.goto(BASE);
+  await page.waitForFunction(() => window.khatt);
+
+  // Wizard: a ready-made children's story on a blackboard; music chosen to suit it
+  await page.locator('#empty-cta button.primary').tap();
+  await page.locator('dialog.wizard .chip', { hasText: 'قصة للأطفال' }).tap();
+  const filled = await page.locator('dialog.wizard textarea').inputValue();
+  const storyType = await page.locator('dialog.wizard .chip.active', { hasText: /^قصة$/ }).count();
+  check('extras: a ready script fills the wizard and sets its video type', filled.startsWith('في قرية صغيرة') && storyType === 1, `${filled.slice(0, 20)}… type chip ${storyType}`);
+  await page.locator('dialog.wizard .chip', { hasText: 'سبورة سوداء' }).tap();
+  await shot(page, 'extras-01-wizard.png');
+  await page.locator('dialog.wizard button.primary.big').tap();
+  await page.waitForFunction(() => !document.querySelector('dialog.wizard'), null, { timeout: 60000 });
+  const d = await k(() => { const p = window.khatt.state.project; return { style: p.board.style, ink: p.elements.find((e) => e.kind === 'text')?.color, audio: p.audio?.src, scenes: p.scenes.length }; });
+  check('extras: draft drawn on a blackboard with chalk-white words', d.style === 'blackboard' && d.ink === '#f2f0e9', JSON.stringify(d));
+  check('extras: story music added to the draft', d.audio === 'music:story', d.audio);
+  await page.waitForTimeout(3000);
+  await shot(page, 'extras-02-blackboard-playing.png');
+  await k(() => window.khatt.stop());
+  const mix = await k(async () => {
+    const buf = await window.khatt.renderMix(window.khatt.state.project, 8, 16000);
+    const d = buf.getChannelData(0);
+    const rms = (a, b) => { let s = 0; for (let i = a * 16000; i < b * 16000; i++) s += d[i] * d[i]; return Math.sqrt(s / ((b - a) * 16000)); };
+    return { start: rms(0, 0.3), body: rms(3, 7) };
+  });
+  check('extras: the music is in the video mix, fading in at the start', mix.body > 0.01 && mix.start < mix.body, `rms start ${mix.start.toFixed(4)} · body ${mix.body.toFixed(4)}`);
+
+  // Chart: added from the Add panel, edited in the Edit panel
+  await page.locator('#bottombar [data-id=add]').tap();
+  await page.locator('#tabs .tab').nth(3).tap();
+  await page.locator('#library .chart-kind', { hasText: 'أعمدة' }).tap();
+  await page.waitForFunction(() => window.khatt.state.project.elements.some((e) => e.chart), null, { timeout: 20000 });
+  const svg0 = await k(() => window.khatt.state.project.elements.find((e) => e.chart).svg.length);
+  await page.locator('#props .chart-row input[type=number]').first().fill('40');
+  await page.waitForFunction((n) => window.khatt.state.project.elements.find((e) => e.chart).svg.length !== n, svg0, { timeout: 10000 }).catch(() => {});
+  const ch = await k(() => { const e = window.khatt.state.project.elements.find((e) => e.chart); return { v: e.chart.values[0], len: e.svg.length, dark: e.svg.includes('#3987e5'), rtl: e.direction }; });
+  check('extras: chart added and redrawn as its numbers change', ch.v === 40 && ch.len !== svg0, JSON.stringify(ch));
+  check('extras: chart colours stepped for the dark board, laid out right to left', ch.dark && ch.rtl === 'rtl');
+  await shot(page, 'extras-03-chart-editor.png');
+  // Animations from the Edit panel
+  await page.locator('#props select:has(option[value="morph"])').selectOption('morph');
+  await page.locator('#props select:has(option[value="pulse"])').selectOption('pulse');
+  await page.locator('#props select:has(option[value="move-out"])').selectOption('fade');
+  await page.locator('#props button', { hasText: 'عكس أفقي' }).tap();
+  const anim = await k(() => { const e = window.khatt.state.project.elements.find((e) => e.chart); return { mode: e.mode, emphasis: e.emphasis, exit: e.exit, flipX: e.flipX }; });
+  check('extras: morph, emphasis, exit and mirror set from the Edit panel', anim.mode === 'morph' && anim.emphasis === 'pulse' && anim.exit === 'fade' && anim.flipX === true, JSON.stringify(anim));
+  await page.locator('#props button', { hasText: 'عكس أفقي' }).tap();
+  await k(() => window.khatt.setSheet(''));
+  // Video frames (drawn exactly as the export draws them): before, during and after the morph
+  const frame = async (t, name) => { const url = await k((t) => window.khatt.frameAt(t), t); fs.writeFileSync(path.join(OUT, name), Buffer.from(url.split(',')[1], 'base64')); };
+  const times = await k(() => { const p = window.khatt.state.project; const i = p.elements.findIndex((e) => e.chart); const s = window.khatt.schedule().slots[i]; return { i, start: s.revealStart, mid: (s.revealStart + s.revealEnd) / 2, done: s.revealEnd + 0.05, pulse: s.revealEnd + (s.end - s.revealEnd) * 0.25 }; });
+  const placed = await k((i) => { const p = window.khatt.state.project; const e = p.elements[i]; const cam = p.elements.find((x) => x.scene === e.scene && x.camera)?.camera; return cam ? Math.hypot(e.x + 430 - cam.x, e.y + 260 - cam.y) : -1; }, times.i);
+  check("extras: an item added while zoomed out lands in its own scene's frame", placed >= 0 && placed < 400, `${placed.toFixed(0)} units from the scene centre`);
+  await frame(times.start - 0.05, 'extras-04a-before-morph.png');
+  await frame(times.mid, 'extras-04b-mid-morph.png');
+  await frame(times.done, 'extras-04c-after-morph.png');
+  await frame(times.pulse, 'extras-05-pulse.png');
+  // Pie on a whiteboard: board look changed in the project panel; chart and words follow
+  await page.locator('#bottombar [data-id=edit]').tap();
+  await page.locator('#props .chart-editor select').first().selectOption('pie');
+  await page.waitForFunction(() => window.khatt.state.project.elements.find((e) => e.chart).svg.includes('<rect'), null, { timeout: 10000 }).catch(() => {});
+  await k(() => { window.khatt.state.selected = null; window.khatt.state.scene = null; window.khatt.commit(); });
+  await page.locator('#props select:has(option[value="greenboard"])').selectOption('whiteboard');
+  await page.waitForFunction(() => window.khatt.state.project.elements.find((e) => e.chart).svg.includes('#2a78d6'), null, { timeout: 10000 }).catch(() => {});
+  const wb = await k(() => { const p = window.khatt.state.project; return { style: p.board.style, pieLight: p.elements.find((e) => e.chart).svg.includes('#2a78d6'), ink: p.elements.find((e) => e.kind === 'text')?.color }; });
+  check('extras: switching to a whiteboard recolours the chart and the chalk words', wb.style === 'whiteboard' && wb.pieLight && wb.ink === '#1f1f1f', JSON.stringify(wb));
+  await k((t) => window.khatt.seek(t), times.pulse + 3); await page.waitForTimeout(300);
+  await k(() => window.khatt.setSheet(''));
+  await shot(page, 'extras-06-pie-whiteboard.png');
+
+  // Music from the Sound tab: listen first, then use
+  await page.locator('#bottombar [data-id=add]').tap();
+  await page.locator('#tabs .tab').nth(5).tap();
+  await page.locator('#library .music-row', { hasText: 'شرقية' }).locator('button.icon').tap();
+  const heard = await page.waitForFunction(() => [...document.querySelectorAll('#library .music-row button.icon')].some((b) => b.textContent === '■'), null, { timeout: 30000 }).then(() => true).catch(() => false);
+  check('extras: ready music can be heard before choosing it', heard);
+  await page.locator('#library .music-row', { hasText: 'شرقية' }).locator('button', { hasText: 'استخدام' }).tap();
+  const m = await k(() => window.khatt.state.project.audio);
+  check('extras: music chosen from the Sound tab', m?.src === 'music:oriental' && m.volume > 0 && m.volume < 1, JSON.stringify(m));
+  await shot(page, 'extras-07-music.png');
+  const ex = await k(async () => { const r = await window.khatt.exportVideo(window.khatt.state.project, { format: 'mp4', width: 640, height: 360, fps: 24 }); return { audio: r.withAudio, size: r.blob.size, method: r.method }; });
+  check('extras: video exports with the generated music', ex.audio && ex.size > 20000, JSON.stringify(ex));
+  check('extras: no script errors', errors.length === 0, errors.slice(0, 3).join(' | '));
   await ctx.close();
 }
 

@@ -1,6 +1,11 @@
 // Core data model. A Project is plain JSON so it can be saved, diffed and undone.
+import type { ChartSpec } from './chart';
 
-export type RevealMode = 'draw' | 'fade' | 'move-in' | 'none';
+export type RevealMode = 'draw' | 'fade' | 'move-in' | 'none' | 'morph';
+/** played once the element is drawn, during its pause */
+export type Emphasis = 'none' | 'pulse' | 'wiggle' | 'bounce';
+/** played when the element's scene ends */
+export type ExitMode = 'none' | 'fade' | 'move-out';
 export type DrawDirection = 'ltr' | 'rtl';
 
 export interface Camera {
@@ -45,6 +50,10 @@ interface BaseElement {
   noHand?: boolean;
   /** id of the scene this element belongs to */
   scene?: string;
+  flipX?: boolean;
+  flipY?: boolean;
+  emphasis?: Emphasis;
+  exit?: ExitMode;
 }
 
 export interface SvgElement extends BaseElement {
@@ -53,6 +62,8 @@ export interface SvgElement extends BaseElement {
   color: string | null; // override for currentColor / stroke
   strokeWidth: number | null;
   source?: AssetSource;
+  /** set for charts: the data the SVG is built from (edit it, then rebuild the SVG) */
+  chart?: ChartSpec;
 }
 
 export interface ImageElement extends BaseElement {
@@ -74,7 +85,7 @@ export interface TextElement extends BaseElement {
 
 export type BoardElement = SvgElement | ImageElement | TextElement;
 
-export type FontId = 'amiri' | 'amiri-bold' | 'cairo';
+export type FontId = 'amiri' | 'amiri-bold' | 'cairo' | 'ruqaa' | 'kufi' | 'lalezar' | 'tajawal';
 
 export interface AssetSource {
   provider: 'library' | 'openverse' | 'wikimedia' | 'pixabay' | 'unsplash' | 'pexels' | 'upload';
@@ -110,7 +121,9 @@ export interface Project {
   title: string;
   aspect: Aspect;
   /** the drawing surface; can be larger than one frame (scenes laid out side by side) */
-  board: { width: number; height: number; background: string };
+  board: { width: number; height: number; background: string; style?: BoardStyle; marginSide?: 'left' | 'right' };
+  /** skin tone of the drawing hand */
+  handTone?: HandTone;
   hand: HandId;
   /** user-supplied hand image; tip is in image pixels */
   customHand: { src: string; tipX: number; tipY: number; scale: number } | null;
@@ -124,6 +137,8 @@ export interface Project {
 }
 
 export type HandId = 'marker-right' | 'marker-left' | 'pen-only' | 'none';
+export type HandTone = 'light' | 'medium' | 'tan' | 'dark';
+export type BoardStyle = 'whiteboard' | 'blackboard' | 'greenboard' | 'glass' | 'notepad' | 'sketchbook' | 'grid';
 
 export const BOARD_W = 1920;
 export const BOARD_H = 1080;

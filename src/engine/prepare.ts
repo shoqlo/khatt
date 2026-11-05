@@ -42,9 +42,13 @@ export type Prepared = PreparedVector | PreparedRaster;
 
 const cache = new Map<string, Promise<Prepared>>();
 
+/** Ink for line drawings that have no colour of their own (set from the board look). */
+let defaultInk = '#1f1f1f';
+export function setInk(ink: string) { defaultInk = ink; }
+
 export function cacheKey(el: BoardElement): string {
   switch (el.kind) {
-    case 'svg': return `svg|${el.direction}|${el.color}|${el.strokeWidth}|${el.svg}`;
+    case 'svg': return `svg|${el.direction}|${el.color ?? defaultInk}|${el.strokeWidth}|${el.svg}`;
     case 'image': return `img|${el.direction}|${el.src}`;
     case 'text': return `txt|${el.font}|${el.size}|${el.color}|${el.align}|${el.text}`;
   }
@@ -146,7 +150,7 @@ async function prepareSvg(el: SvgElement): Promise<PreparedVector> {
   svg.setAttribute('width', String(w));
   svg.setAttribute('height', String(h));
   svg.setAttribute('viewBox', `${ox} ${oy} ${w} ${h}`);
-  svg.style.color = el.color || '#1f1f1f';
+  svg.style.color = el.color || defaultInk;
   sanitizeSvg(svg);
   const root = measureHost();
   root.appendChild(svg);
@@ -182,7 +186,8 @@ async function prepareSvg(el: SvgElement): Promise<PreparedVector> {
         join: (cs.strokeLinejoin as CanvasLineJoin) || 'round',
       });
     }
-    orderStrokes(strokes, el.direction);
+    // Charts are laid out in drawing order already (title, axes, then each bar in reading order).
+    orderStrokes(strokes, el.chart ? 'ltr' : el.direction);
     return { kind: 'vector', w, h, strokes, total: strokes.reduce((a, s) => a + s.length, 0) };
   } finally {
     svg.remove();

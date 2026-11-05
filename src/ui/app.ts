@@ -1,6 +1,8 @@
 // Shared editor state and actions used by every panel.
-import { newProject, newScene, uid, defaultTiming, type BoardElement, type Camera, type Project, type TextElement, type SvgElement, type ImageElement, type FontId, type AssetSource } from '../engine/types';
-import { prepare, prepareAll } from '../engine/prepare';
+import { newProject, newScene, uid, defaultTiming, frameOf, type BoardElement, type Camera, type Project, type TextElement, type SvgElement, type ImageElement, type FontId, type AssetSource } from '../engine/types';
+import { prepare, prepareAll, setInk } from '../engine/prepare';
+import { boardInk, boardIsDark } from '../engine/board';
+import { buildChartSvg, type ChartSpec } from '../engine/chart';
 import { fullView } from '../engine/timeline';
 import { normalizeProject, insertIndexForScene, fitSceneToVoice } from '../engine/scenes';
 import { preloadProjectSound, blobDuration } from './sound';
@@ -20,7 +22,7 @@ export const state = {
   view: { x: 960, y: 540, zoom: 1 } as Camera,
   playing: false,
   time: 0,
-  tab: 'icons' as 'icons' | 'online' | 'text' | 'upload' | 'audio',
+  tab: 'icons' as 'icons' | 'online' | 'text' | 'chart' | 'upload' | 'audio',
   saveStatus: '',
   customHand: null as CustomHand | null,
 };
@@ -142,6 +144,7 @@ export function afterLoad() {
   if (state.scene && !state.project.scenes.some((s) => s.id === state.scene)) state.scene = null;
   preloadProjectSound(state.project);
   loadCustomHand();
+  setInk(boardInk(state.project));
   prepareAll(state.project.elements).catch((e) => toast(String(e.message), 'error')).finally(ui.requestDraw);
   ui.renderAll();
 }
@@ -213,10 +216,14 @@ async function addElement(e: BoardElement) {
   if (state.replaceTarget) { state.replaceTarget = null; document.body.classList.remove('replacing'); ui.renderTabs(); }
   if (target) return replaceElement(target, e, size);
   // Place near the centre of the current view, nudged so new things don't stack exactly.
+  // Zoomed out over a multi-scene board (e.g. right after the draft played), the view's centre
+  // falls between scenes: put it in its own scene's frame instead, and show that scene.
+  e.scene = currentSceneId();
+  const sceneCam = state.project.elements.find((x) => x.scene === e.scene && x.camera)?.camera;
+  if (sceneCam && state.view.zoom < 0.9) state.view = { ...sceneCam };
   const n = state.project.elements.length;
   e.x = Math.round(state.view.x - (size.w * e.scale) / 2 + ((n % 5) - 2) * 30);
   e.y = Math.round(state.view.y - (size.h * e.scale) / 2 + ((n % 3) - 1) * 30);
-  e.scene = currentSceneId();
   state.project.elements.splice(insertIndexForScene(state.project, e.scene), 0, e);
   state.selected = e.id;
   await prepareAll([e]);
@@ -255,6 +262,29 @@ export function addSvg(name: string, svg: string, source?: AssetSource, style?: 
   const strokeWidth = style === 'line' ? Math.round((14 / scale) * 100) / 100 : null;
   const e: SvgElement = { ...base(name), kind: 'svg', svg, color: null, strokeWidth, scale, source };
   return addElement(e);
+}
+
+/** A chart the hand draws: built from its data, editable in the Edit panel. */
+export async function addChart(spec: ChartSpec) {
+  const rtl = isRtlText(spec.title) || spec.labels.some(isRtlText);
+  let svg: string;
+  try { svg = await buildChartSvg(spec, { rtl, dark: boardIsDark(state.project) }); } catch (err) { toast(`${t('error')}: ${(err as Error).message}`, 'error'); return; }
+  const f = frameOf(state.project);
+  const scale = Math.round(((Math.min(f.w, f.h) * 0.8) / 1000) * 100) / 100;
+  const e: SvgElement = {
+    ...base(spec.title || t('chart')), kind: 'svg', svg, color: null, strokeWidth: null, scale, chart: spec,
+    direction: rtl ? 'rtl' : 'ltr',
+    timing: { ...defaultTiming(), animate: Math.min(10, 3 + spec.labels.length * 0.7) },
+  };
+  return addElement(e);
+}
+
+/** Rebuild a chart's drawing after its data, direction or the board look changed. */
+export async function rebuildChart(e: SvgElement) {
+  if (!e.chart) return;
+  e.svg = await buildChartSvg(e.chart, { rtl: e.direction === 'rtl', dark: boardIsDark(state.project) });
+  if (e.chart.title.trim()) e.name = e.chart.title.slice(0, 24);
+  await prepareAll([e]);
 }
 
 export async function addImageBlob(name: string, blob: Blob, source?: AssetSource) {

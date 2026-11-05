@@ -126,6 +126,8 @@ function collectAssetRefs(p: Project): string[] {
   const refs = new Set<string>();
   for (const e of p.elements) if (e.kind === 'image' && e.src.startsWith('asset:')) refs.add(e.src);
   if (p.audio?.src.startsWith('asset:')) refs.add(p.audio.src);
+  // Each scene's own voice recording travels with the project too.
+  for (const s of p.scenes ?? []) if (s.voice?.src.startsWith('asset:')) refs.add(s.voice.src);
   if (p.customHand?.src.startsWith('asset:')) refs.add(p.customHand.src);
   return [...refs];
 }

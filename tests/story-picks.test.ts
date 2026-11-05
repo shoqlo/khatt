@@ -30,7 +30,14 @@ async function picks(text: string, story: boolean) {
 describe('picture choice for a real story', () => {
   it('picks a fitting picture for every scene of "Salem and the little bird"', async () => {
     const got = await picks(fs.readFileSync('tests/fixtures/story-salem.txt', 'utf8'), true);
-    expect(got).toEqual(['bird', 'desert', 'sun', 'droplet', 'deciduous-tree', 'bird', 'star', 'bird', 'palm-tree', 'house', 'red-heart']);
+    // Scene 5 "رأيا طائراً صغيراً عطشان تحت شجرةٍ يابسة": the thirsty bird (طائراً, with tanween) is the subject.
+    expect(got).toEqual(['bird', 'desert', 'sun', 'droplet', 'bird', 'bird', 'star', 'bird', 'palm-tree', 'house', 'red-heart']);
+  });
+  it('understands possessive and tanween endings, but not verbs for two people', async () => {
+    const got = await picks('مع تطبيقنا اطلب من هاتفك.\n\nوجد عصفوراً صغيراً.\n\nوأكلا تحت ظل النخلة.', false);
+    expect(got[0]).toBe('mobile-phone');   // هاتفك = your phone
+    expect(got[1]).toBe('bird');           // عصفوراً = a bird (tanween)
+    expect(got[2]).toBe('palm-tree');      // أكلا = they both ate: not "food"
   });
   it('avoids the traps that used to fool it', async () => {
     const got = await picks('رأى الطائر في السماء.\n\nعاد بطريق الواحة.\n\nظهر القمر في الليل.', true);

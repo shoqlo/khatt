@@ -14,6 +14,12 @@ import { loadLibrary, type LibStyle } from '../library/builtin';
 import { searchCommons, searchPixabay, downloadHit } from '../library/online';
 import { appConfig } from '../config';
 import { libraryCandidates } from '../generator/pick';
+import { TEMPLATES } from '../generator/templates';
+import { MUSIC_STYLES, MUSIC_VOLUME, musicSrc, musicLoop, type MusicStyle } from '../engine/music';
+import type { BoardStyle } from '../engine/types';
+
+/** Music that suits each kind of video (the user can change it). */
+const MUSIC_FOR: Record<VideoType, MusicStyle> = { lesson: 'calm', explainer: 'focus', story: 'story', promo: 'bright' };
 
 const opts = {
   script: '',
@@ -23,6 +29,9 @@ const opts = {
   online: false,
   voice: 'record' as 'record' | 'none',
   photos: [] as File[],
+  board: 'whiteboard' as BoardStyle,
+  /** 'auto' = the style that suits the video type */
+  music: 'auto' as MusicStyle | 'auto' | 'none',
 };
 
 /** Greedy word wrap measured with the real Arabic shaping, shrinking until it fits the box. */
@@ -82,6 +91,20 @@ export function openWizard() {
   }) as HTMLTextAreaElement;
   updateStats();
 
+  // Ready-made scripts: fill the box and set the matching video type.
+  const templates = h('div', { class: 'chips wrap' }, TEMPLATES.map((tpl) => h('button', {
+    class: 'chip', onclick: () => {
+      const text = tpl[getLang() === 'ar' ? 'ar' : 'en'].text;
+      if (opts.script.trim() && opts.script.trim() !== text && !confirm(t('replaceScript'))) return;
+      opts.script = text; ta.value = text; opts.type = tpl.type;
+      typeChips.replaceWith(typeChips = typeChooser());
+      updateStats();
+    },
+  }, tpl[getLang() === 'ar' ? 'ar' : 'en'].name)));
+  const typeChooser = () => chips(() => opts.type, [['lesson', 'typeLesson'], ['explainer', 'typeExplainer'], ['story', 'typeStory'], ['promo', 'typePromo']], (v) => { opts.type = v; updateStats(); });
+  let typeChips = typeChooser();
+  const musicName = (m: MusicStyle) => t(`music_${m}` as Key);
+
   const photoInput = h('input', { type: 'file', accept: 'image/*', multiple: true, id: 'wizard-photos', class: 'visually-hidden' }) as HTMLInputElement;
   const photoNote = h('span', { class: 'note' });
   const showPhotos = () => { photoNote.textContent = opts.photos.length ? `${opts.photos.length} ✓` : ''; };
@@ -94,9 +117,9 @@ export function openWizard() {
 
   add(body,
     h('h3', {}, t('wizardTitle')),
+    h('div', { class: 'field' }, h('span', {}, t('startFromTemplate')), templates),
     h('label', { class: 'field' }, h('span', {}, t('scriptLabel')), ta), stats,
-    h('div', { class: 'field' }, h('span', {}, t('videoType')),
-      chips(() => opts.type, [['lesson', 'typeLesson'], ['explainer', 'typeExplainer'], ['story', 'typeStory'], ['promo', 'typePromo']], (v) => { opts.type = v; updateStats(); })),
+    h('div', { class: 'field' }, h('span', {}, t('videoType')), typeChips),
     h('div', { class: 'field' }, h('span', {}, t('shape')),
       chips(() => opts.aspect, [['landscape', 'shapeLandscape'], ['portrait', 'shapePortrait'], ['square', 'shapeSquare']], (v) => (opts.aspect = v))),
     h('div', { class: 'field' }, h('span', {}, t('drawingStyle')),
@@ -106,6 +129,10 @@ export function openWizard() {
       h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: opts.online, onchange: (e: Event) => (opts.online = (e.target as HTMLInputElement).checked) }), t('resOnline')),
       h('div', { class: 'row' }, photoInput, h('label', { for: 'wizard-photos', class: 'button' }, `${t('resPhotos')}…`), photoNote),
       h('div', { class: 'note' }, t('resPhotosHint'))),
+    h('div', { class: 'field' }, h('span', {}, t('boardLook')),
+      chips(() => opts.board, [['whiteboard', 'lookWhiteboard'], ['blackboard', 'lookBlackboard'], ['greenboard', 'lookGreenboard'], ['glass', 'lookGlass'], ['notepad', 'lookNotepad'], ['sketchbook', 'lookSketchbook'], ['grid', 'lookGrid']], (v) => (opts.board = v))),
+    h('div', { class: 'field' }, h('span', {}, t('backgroundMusic')),
+      chips(() => opts.music, [['auto', 'musicAuto'], ...MUSIC_STYLES.map((m) => [m, `music_${m}`] as [MusicStyle, Key]), ['none', 'musicNone']], (v) => (opts.music = v))),
     h('div', { class: 'field' }, h('span', {}, t('voicePlan')),
       chips(() => opts.voice, [['record', 'voiceRecordAfter'], ['none', 'voiceNone']], (v) => (opts.voice = v))),
     h('div', { class: 'note' }, t('newProjectNote')),
@@ -117,6 +144,9 @@ export function openWizard() {
   async function create() {
     if (!splitScenes(opts.script).length) { toast(t('scriptEmpty'), 'warn'); ta.focus(); return; }
     go.disabled = true; bar.hidden = false;
+    const music = opts.music === 'auto' ? MUSIC_FOR[opts.type] : opts.music;
+    // Make the music while the drawings are chosen, so the draft can play straight away.
+    if (music !== 'none') musicLoop(music).catch(() => {});
     try {
       const lib = await loadLibrary();
       const styleFor = (scene: number): LibStyle | null => opts.style === 'mixed' ? null : opts.style;
@@ -140,7 +170,7 @@ export function openWizard() {
         return null;
       };
       const project = await generateProject(
-        { script: opts.script, type: opts.type, aspect: opts.aspect, style: opts.style, photos: opts.photos },
+        { script: opts.script, type: opts.type, aspect: opts.aspect, style: opts.style, photos: opts.photos, board: opts.board },
         {
           candidate,
           online,
@@ -151,6 +181,7 @@ export function openWizard() {
           onProgress: (done, total) => { bar.value = done / total; status.textContent = `${t('making')} ${Math.min(done + 1, total)} / ${total}…`; },
         },
       );
+      if (music !== 'none') project.audio = { src: musicSrc(music), name: musicName(music), duration: 0, volume: MUSIC_VOLUME };
       loadProject(project);
       await save();
       dlg.close();

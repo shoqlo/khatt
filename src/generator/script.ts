@@ -2,7 +2,8 @@
 // split into scenes, pick key words, find drawings, lay each scene out in its own
 // frame-sized cell of the board, and time it from reading speed. Everything it makes is a
 // normal, editable project.
-import { newProject, newScene, uid, frameOf, FRAMES, type Aspect, type BoardElement, type FontId, type Project, type SvgElement, type TextElement, type ImageElement, type AssetSource } from '../engine/types';
+import { newProject, newScene, uid, frameOf, FRAMES, type Aspect, type BoardElement, type FontId, type Project, type SvgElement, type TextElement, type ImageElement, type AssetSource, type BoardStyle } from '../engine/types';
+import { BOARD_LOOKS } from '../engine/board';
 import { normalizeArabic, hasArabic, arabicCandidates, translateArabicWord, inGlossary, inGlossaryExact } from '../library/glossary';
 
 export type VideoType = 'lesson' | 'explainer' | 'story' | 'promo';
@@ -15,7 +16,9 @@ const AR_STOP = new Set([
   'متي', 'اين', 'هل', 'لا', 'لم', 'لن', 'ان', 'إن', 'أن', 'اذا', 'إذا', 'لو', 'حتي', 'عند', 'عندما', 'بين', 'بعد', 'قبل', 'فوق', 'تحت', 'ايضا', 'جدا', 'فقط',
   'كما', 'مثل', 'غير', 'ذات', 'ذو', 'لدي', 'لها', 'له', 'لهم', 'بها', 'به', 'فيها', 'فيه', 'منها', 'منه', 'عليها', 'عليه', 'اليها', 'اليه', 'هناك', 'هنا',
   'الان', 'كذلك', 'يا', 'ايها', 'التي', 'وهو', 'وهي', 'وفي', 'ومن', 'وعلى', 'او', 'لان', 'لأن', 'حيث', 'كي', 'لكي', 'منذ', 'خلال', 'نحو', 'عبر', 'دون',
-  'سوف', 'ليس', 'ليست', 'يمكن', 'تستطيع', 'يستطيع', 'جميع', 'اكثر', 'اقل', 'كثير', 'قليل', 'احد', 'اخري', 'اخر', 'نفس', 'عدة', 'تم', 'وقد', 'فقد',
+  'اليوم', 'غدا', 'امس', 'سوف', 'ليس', 'ليست',
+  // verbs that split into a misleading noun (وجد = found, not و + جد = and grandfather)
+  'وجد', 'وجدت', 'وجدوا', 'يجد', 'تجد', 'وجدا', 'عاد', 'عادت', 'عادوا', 'صار', 'صارت', 'اصبح', 'اصبحت', 'بدا', 'بدات', 'يمكن', 'تستطيع', 'يستطيع', 'جميع', 'اكثر', 'اقل', 'كثير', 'قليل', 'احد', 'اخري', 'اخر', 'نفس', 'عدة', 'تم', 'وقد', 'فقد',
 ]);
 const EN_STOP = new Set('a an the and or but if then so of to in on at by for with from into over under about as is are was were be been being it its this that these those there here we you he she they i me my our your their his her them us do does did done can could will would should may might must not no yes very just also more most much many some any all each every than too only own same such both few other again once up down out off'.split(' '));
 
@@ -187,6 +190,8 @@ export interface ScriptOptions {
   style: StyleChoice;
   photos: Blob[];
   title?: string;
+  /** board look: sets the ink of the words (chalk-white on a blackboard) */
+  board?: BoardStyle;
 }
 
 /** Minimum match strength (search score + word trust) to put a picture in a scene. */
@@ -208,6 +213,10 @@ export async function generateProject(o: ScriptOptions, deps: GeneratorDeps): Pr
   const rtl = hasArabic(o.script);
   const p = newProject(o.title || keyPhrase(texts[0], 6), o.aspect);
   p.scenes = [];
+  if (o.board) p.board.style = o.board;
+  const ink = BOARD_LOOKS[o.board ?? 'whiteboard'].ink;
+  // The promo's last line stands out in red (a lighter red on dark boards).
+  const accent = BOARD_LOOKS[o.board ?? 'whiteboard'].dark ? '#ff8a7a' : '#c0392b';
   const { board, cells } = gridLayout(texts.length, o.aspect, rtl);
   p.board.width = board.width; p.board.height = board.height;
   const f = frameOf(p);
@@ -233,7 +242,7 @@ export async function generateProject(o: ScriptOptions, deps: GeneratorDeps): Pr
     const phrase = keyPhrase(text, o.type === 'story' ? 14 : 9);
     const box = abs(tpl.text);
     const fitted = await deps.fitText(phrase, font, box, baseSize);
-    const textEl: TextElement = { ...base, id: uid(), name: phrase.slice(0, 24), kind: 'text', text: fitted.text, font, size: fitted.size, color: o.type === 'promo' && i === texts.length - 1 ? '#c0392b' : '#1f1f1f', align: 'center', x: 0, y: 0, scale: 1 };
+    const textEl: TextElement = { ...base, id: uid(), name: phrase.slice(0, 24), kind: 'text', text: fitted.text, font, size: fitted.size, color: o.type === 'promo' && i === texts.length - 1 ? accent : ink, align: 'center', x: 0, y: 0, scale: 1 };
     fitInto(textEl, await deps.measure(textEl), box);
 
     // Pictures: a drawing for the strongest key word, a photo of the user's if given, else a second drawing

@@ -101,7 +101,8 @@ async function openLicences() {
       ` — ${s.author ?? ''} · ${s.count} · `,
       h('a', { href: s.licenseUrl || '#', target: '_blank', rel: 'noopener' }, s.license)))),
     h('h4', {}, t('fonts')),
-    h('ul', { class: 'licences' }, h('li', {}, 'Amiri — Khaled Hosny · SIL Open Font License 1.1'), h('li', {}, 'Cairo — Mohamed Gaber · SIL Open Font License 1.1')),
+    h('ul', { class: 'licences' }, ['Amiri — Khaled Hosny', 'Aref Ruqaa — Khaled Hosny & Aref Ruqaa Project Authors', 'Reem Kufi — Khaled Hosny', 'Cairo — Mohamed Gaber', 'Tajawal — Boutros Fonts', 'Lalezar — Borna Izadpanah']
+      .map((f) => h('li', {}, `${f} · SIL Open Font License 1.1`))),
     h('h4', {}, t('software')),
     h('ul', { class: 'licences' }, ['HarfBuzz (MIT)', 'bidi-js (MIT)', 'mp4-muxer (MIT)', 'webm-muxer (MIT)', 'gifenc (MIT)'].map((x) => h('li', {}, x))),
     h('div', { class: 'note' }, t('openverseCredit'), ' · ', t('wikimediaCredit')),

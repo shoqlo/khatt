@@ -14,7 +14,11 @@
   "license": "UNLICENSED",
   "dependencies": {
     "@expo-google-fonts/amiri": "^0.4.1",
+    "@expo-google-fonts/aref-ruqaa": "^0.4.1",
     "@expo-google-fonts/cairo": "^0.4.2",
+    "@expo-google-fonts/lalezar": "^0.4.1",
+    "@expo-google-fonts/reem-kufi": "^0.4.2",
+    "@expo-google-fonts/tajawal": "^0.4.1",
     "bidi-js": "^1.1.0",
     "gifenc": "^1.0.3",
     "harfbuzzjs": "^1.6.4",

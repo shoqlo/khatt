@@ -1,5 +1,6 @@
 import { frameOf, type BoardElement, type Camera, type Project } from './types';
-import { getPrepared, type Prepared, type PreparedRaster, type PreparedVector, type Pt } from './prepare';
+import { getPrepared, setInk, type Prepared, type PreparedRaster, type PreparedVector, type Pt } from './prepare';
+import { drawBoard, boardInk, boardTool } from './board';
 import { cameraAt, ease, revealProgress, schedule, type Bounds, type Schedule } from './timeline';
 import { drawHand, type CustomHand } from './hand';
 
@@ -21,11 +22,15 @@ export function viewMatrix(cam: Camera, cw: number, ch: number, frameW: number):
   return new DOMMatrix([k, 0, 0, k, cw / 2 - cam.x * k, ch / 2 - cam.y * k]);
 }
 
-function elementMatrix(el: BoardElement, w: number, h: number, dx = 0): DOMMatrix {
+/** Extra motion on top of an element's own placement (entrance, emphasis, exit, morph). */
+export interface Motion { dx?: number; dy?: number; scale?: number; rot?: number; alpha?: number }
+
+function elementMatrix(el: BoardElement, w: number, h: number, mo: Motion = {}): DOMMatrix {
+  const k = mo.scale ?? 1;
   return new DOMMatrix()
-    .translate(el.x + dx + (w * el.scale) / 2, el.y + (h * el.scale) / 2)
-    .rotate(el.rotation)
-    .scale(el.scale)
+    .translate(el.x + (mo.dx ?? 0) + (w * el.scale) / 2, el.y + (mo.dy ?? 0) + (h * el.scale) / 2)
+    .rotate(el.rotation + (mo.rot ?? 0))
+    .scale(el.scale * k * (el.flipX ? -1 : 1), el.scale * k * (el.flipY ? -1 : 1))
     .translate(-w / 2, -h / 2);
 }
 
@@ -109,19 +114,19 @@ function drawRaster(ctx: CanvasRenderingContext2D, p: PreparedRaster, progress: 
 }
 
 /** Draw one element; returns the pen tip in world space if it is mid-draw. */
-export function drawElement(ctx: CanvasRenderingContext2D, el: BoardElement, prep: Prepared, progress: number, boardW = 1920): Pt | null {
+export function drawElement(ctx: CanvasRenderingContext2D, el: BoardElement, prep: Prepared, progress: number, boardW = 1920, motion: Motion = {}): Pt | null {
   if (progress <= 0) return null;
-  let dx = 0;
-  let mode = el.mode;
+  const mo = { ...motion };
+  const mode = el.mode;
   ctx.save();
-  ctx.globalAlpha *= el.opacity;
+  ctx.globalAlpha *= el.opacity * (mo.alpha ?? 1);
   if (mode === 'move-in' && progress < 1) {
     const from = el.direction === 'rtl' ? boardW + 200 - el.x : -(prep.w * el.scale + el.x + 200);
-    dx = from * (1 - ease(progress));
-  } else if (mode === 'fade' && progress < 1) {
+    mo.dx = (mo.dx ?? 0) + from * (1 - ease(progress));
+  } else if ((mode === 'fade' || mode === 'morph') && progress < 1) {
     ctx.globalAlpha *= progress;
   }
-  const m = elementMatrix(el, prep.w, prep.h, dx);
+  const m = elementMatrix(el, prep.w, prep.h, mo);
   ctx.transform(m.a, m.b, m.c, m.d, m.e, m.f);
   const drawP = mode === 'draw' ? progress : 1;
   let tip: Pt | null = null;
@@ -131,6 +136,55 @@ export function drawElement(ctx: CanvasRenderingContext2D, el: BoardElement, pre
   if (!tip || el.noHand || mode !== 'draw') return null;
   const w = m.transformPoint(tip);
   return { x: w.x, y: w.y };
+}
+
+const EXIT_SECONDS = 0.6;
+
+/** Emphasis (while paused after drawing) and exit (when the scene ends). null = gone. */
+export function motionAt(el: BoardElement, slot: Schedule['slots'][number], t: number, sceneEnd: number, prep: Prepared, boardW: number): Motion | null {
+  const mo: Motion = {};
+  if (el.emphasis && el.emphasis !== 'none' && t > slot.revealEnd && t < slot.end) {
+    const u = (t - slot.revealEnd) / (slot.end - slot.revealEnd);
+    const env = Math.sin(Math.PI * u); // starts and ends at rest
+    if (el.emphasis === 'pulse') mo.scale = 1 + 0.09 * Math.abs(Math.sin(2 * Math.PI * u)) * env;
+    if (el.emphasis === 'wiggle') mo.rot = 5 * Math.sin(6 * Math.PI * u) * env;
+    if (el.emphasis === 'bounce') mo.dy = -0.08 * prep.h * el.scale * Math.abs(Math.sin(3 * Math.PI * u)) * env;
+  }
+  if (el.exit && el.exit !== 'none' && t > sceneEnd) {
+    const pe = Math.min(1, (t - sceneEnd) / EXIT_SECONDS);
+    if (pe >= 1) return null;
+    if (el.exit === 'fade') mo.alpha = 1 - pe;
+    if (el.exit === 'move-out') {
+      const away = el.direction === 'rtl' ? -(el.x + prep.w * el.scale + 200) : boardW + 200 - el.x;
+      mo.dx = (mo.dx ?? 0) + away * ease(pe);
+    }
+  }
+  return mo;
+}
+
+/** VideoScribe-style morph: the previous picture turns into this one (moves, resizes, cross-fades). */
+function drawMorph(ctx: CanvasRenderingContext2D, from: BoardElement, to: BoardElement, toPrep: Prepared, p: number, boardW: number) {
+  const fromPrep = getPrepared(from);
+  const a = boundsOf(from), b = boundsOf(to);
+  const k = ease(p);
+  const r = { x: a.x + (b.x - a.x) * k, y: a.y + (b.y - a.y) * k, w: a.w + (b.w - a.w) * k, h: a.h + (b.h - a.h) * k };
+  const fit = (el: BoardElement, prep: Prepared) => {
+    const s = Math.min(r.w / (prep.w * el.scale), r.h / (prep.h * el.scale)) * el.scale;
+    return { ...el, mode: 'none' as const, scale: s, x: r.x + (r.w - prep.w * s) / 2, y: r.y + (r.h - prep.h * s) / 2, rotation: from.rotation + (to.rotation - from.rotation) * k };
+  };
+  if (fromPrep) drawElement(ctx, fit(from, fromPrep), fromPrep, 1, boardW, { alpha: 1 - k });
+  drawElement(ctx, fit(to, toPrep), toPrep, 1, boardW, { alpha: k });
+}
+
+const sceneEndCache = new WeakMap<Schedule, Map<string, number>>();
+function sceneEnds(p: Project, s: Schedule): Map<string, number> {
+  let m = sceneEndCache.get(s);
+  if (!m) {
+    m = new Map();
+    p.elements.forEach((e, i) => m!.set(e.scene ?? '', Math.max(m!.get(e.scene ?? '') ?? 0, s.slots[i].end)));
+    sceneEndCache.set(s, m);
+  }
+  return m;
 }
 
 export interface FrameOptions {
@@ -153,15 +207,27 @@ export function renderFrame(ctx: CanvasRenderingContext2D, p: Project, t: number
   ctx.fillRect(0, 0, cw, ch);
   const v = viewMatrix(cam, cw, ch, frameOf(p).w);
   ctx.setTransform(v);
-  ctx.fillStyle = p.board.background;
-  ctx.fillRect(0, 0, p.board.width, p.board.height);
+  setInk(boardInk(p));
+  drawBoard(ctx, p);
   let pending = 0;
   let tip: Pt | null = null;
+  const sceneEnd = o.showAll ? null : sceneEnds(p, s);
   p.elements.forEach((el, i) => {
     const prep = getPrepared(el);
     if (!prep) { pending++; return; }
     const progress = o.showAll ? 1 : revealProgress(s.slots[i], t);
-    const tp = drawElement(ctx, el, prep, progress, p.board.width);
+    let tp: Pt | null = null;
+    if (!o.showAll) {
+      // An element that the next one morphs into stops being drawn on its own once the morph starts.
+      const next = p.elements[i + 1];
+      if (next?.mode === 'morph' && t >= s.slots[i + 1].revealStart) return;
+      if (el.mode === 'morph' && i > 0 && progress > 0 && progress < 1) { drawMorph(ctx, p.elements[i - 1], el, prep, progress, p.board.width); return; }
+      const mo = motionAt(el, s.slots[i], t, sceneEnd?.get(el.scene ?? '') ?? Infinity, prep, p.board.width);
+      if (mo === null) return; // already left the board
+      tp = drawElement(ctx, el, prep, progress, p.board.width, mo);
+    } else {
+      tp = drawElement(ctx, el, prep, progress, p.board.width);
+    }
     if (tp) tip = tp;
     if (o.selectedId === el.id) {
       const b = boundsOf(el);
@@ -176,7 +242,7 @@ export function renderFrame(ctx: CanvasRenderingContext2D, p: Project, t: number
   if (tip && p.hand !== 'none') {
     const scr = v.transformPoint(tip as Pt);
     ctx.setTransform(1, 0, 0, 1, 0, 0);
-    drawHand(ctx, p.hand, scr.x, scr.y, ch * 0.22, o.customHand);
+    drawHand(ctx, p.hand, scr.x, scr.y, ch * 0.22, o.customHand, { tone: p.handTone ?? 'medium', tool: boardTool(p) });
   }
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   return { pending };

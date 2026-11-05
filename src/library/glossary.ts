@@ -27,7 +27,9 @@ export const AR_EN: Record<string, string> = {
   'نار': 'fire flame', 'ماء': 'water droplet', 'شجرة': 'tree', 'زهرة': 'flower', 'نبات': 'plant leaf', 'ورق': 'leaf paper',
   'جبل': 'mountain', 'بحر': 'sea wave', 'أرض': 'earth world globe', 'عالم': 'world globe', 'بيئة': 'environment leaf recycle',
   'قلب': 'red-heart heart', 'حب': 'red-heart love', 'صحة': 'health heart medical', 'طبيب': 'doctor stethoscope', 'مستشفى': 'hospital',
-  'دواء': 'medicine pill', 'رياضة': 'sport ball', 'كرة': 'ball football', 'طعام': 'food', 'أكل': 'food eat',
+  'دواء': 'medicine pill', 'رياضة': 'sport ball', 'كرة': 'ball football', 'طعام': 'fork-and-knife-with-plate food', 'أكل': 'fork-and-knife-with-plate food eat',
+  'وجبة': 'fork-and-knife-with-plate meal', 'وجبات': 'fork-and-knife-with-plate meal', 'مطعم': 'fork-and-knife-with-plate restaurant',
+  'عملاء': 'customer users',
   'قهوة': 'coffee cup', 'شاي': 'tea cup', 'تمر': 'dates', 'فاكهة': 'fruit apple', 'تفاحة': 'apple',
   'رجل': 'man', 'امرأة': 'woman', 'طفل': 'child baby', 'أطفال': 'children kids', 'عائلة': 'family',
   'شخص': 'person user', 'ناس': 'people users', 'يد': 'hand', 'عين': 'eye', 'ابتسامة': 'smile',
@@ -39,7 +41,7 @@ export const AR_EN: Record<string, string> = {
   'رياضيات': 'math calculator', 'حاسبة': 'calculator', 'لغة': 'language', 'ترجمة': 'translate language',
   'قانون': 'law scale', 'عدالة': 'justice scale', 'عقد': 'contract file', 'توقيع': 'signature', 'خبر': 'news',
   'إعلان': 'announcement megaphone', 'تسويق': 'marketing megaphone', 'اتصال': 'communication phone',
-  'شبكة': 'network', 'تطبيق': 'app', 'برنامج': 'software code', 'برمجة': 'code programming', 'روبوت': 'robot',
+  'شبكة': 'network', 'تطبيق': 'mobile-phone app', 'برنامج': 'software code', 'برمجة': 'code programming', 'روبوت': 'robot',
   'ذكاء': 'brain robot', 'اصطناعي': 'robot ai', 'ضوء': 'light bulb', 'بناء': 'building construction',
   'سلم': 'stairs ladder', 'مشكلة': 'problem alert', 'حل': 'solution puzzle', 'لغز': 'puzzle', 'خطة': 'plan list',
   'قائمة': 'list', 'مهمة': 'task checklist', 'تقرير': 'report chart', 'عرض': 'presentation', 'مشروع': 'project briefcase',
@@ -64,6 +66,9 @@ export const AR_EN: Record<string, string> = {
 
 const PREFIXES = ['وبال', 'وال', 'بال', 'كال', 'فال', 'لل', 'ال', 'و', 'ب', 'ل'];
 const SUFFIXES = ['ات', 'ون', 'ين', 'ان', 'ها', 'هم', 'ة', 'ه', 'ي'];
+// Possessive endings (هاتفك = your phone, تطبيقنا = our app). Only stripped when at least three
+// letters remain, so سمك (fish) never becomes سم (poison).
+const LONG_SUFFIXES = ['كم', 'نا', 'ك'];
 
 export function normalizeArabic(w: string): string {
   return w
@@ -82,6 +87,10 @@ export function arabicCandidates(raw: string): string[] {
   const out = [w];
   for (const p of PREFIXES) if (w.startsWith(p) && w.length - p.length >= 2) out.push(w.slice(p.length));
   for (const c of [...out]) for (const s of SUFFIXES) if (c.endsWith(s) && c.length - s.length >= 2) out.push(c.slice(0, -s.length));
+  for (const c of [...out]) for (const s of LONG_SUFFIXES) if (c.endsWith(s) && c.length - s.length >= 3) out.push(c.slice(0, -s.length));
+  // The alef of tanween (عصفوراً = a bird) only when the tanween mark is written: a bare final alef
+  // is usually a verb for two people (أكلا = they both ate), which must not become a noun.
+  if (/ً/.test(raw)) for (const c of [...out]) if (c.endsWith('ا') && c.length >= 4) out.push(c.slice(0, -1));
   // ة is often typed as ه: try the ة spelling. (Never add ة to other words: طائر = bird, طائرة = airplane.)
   for (const c of [...out]) if (c.endsWith('ه')) out.push(c.slice(0, -1) + 'ة');
   return [...new Set(out)];

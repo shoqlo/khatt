@@ -30,7 +30,10 @@ export function libraryCandidates(lib: LibIndex, styleFor: (scene: number) => Li
         if (idx < 0) continue;
         const item = r.items[idx];
         // Already drawn earlier in the video, or not in the chosen style: slightly less attractive.
-        const reuse = fresh ? 0 : storyCharacters && characterCats.has(item.cat) ? 0.5 : 2;
+        // The very same character coming back (the word names the drawing exactly) costs nothing:
+        // better the same bird again than a phoenix.
+        const character = storyCharacters && characterCats.has(item.cat);
+        const reuse = fresh ? 0 : character && k.english.includes(item.name) ? 0 : character ? 0.5 : 2;
         const score = (r.scores?.[idx] ?? 0) - reuse - (style || !want ? 0 : 0.25);
         if (best && best.score >= score) continue;
         best = {

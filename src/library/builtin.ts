@@ -93,6 +93,14 @@ function scoreArabic(item: LibItem, cands: string[]): number {
   return 0;
 }
 
+/** English words whose best drawing is not the one a plain name match finds (food → plate, not a can). */
+const EN_PREFER: Record<string, string> = {
+  food: 'fork-and-knife-with-plate', meal: 'fork-and-knife-with-plate', meals: 'fork-and-knife-with-plate', restaurant: 'fork-and-knife-with-plate',
+  team: 'users', idea: 'light-bulb', water: 'droplet', box: 'package', app: 'mobile-phone',
+};
+/** "no-entry", "non-potable-water": only when the query itself says no. */
+const NEGATIVE = /^(no|non|not)-/;
+
 export async function searchLibrary(query: string, o: SearchOptions = {}): Promise<SearchResult> {
   const lib = await loadLibrary();
   const limit = o.limit ?? 60, offset = o.offset ?? 0;
@@ -101,7 +109,7 @@ export async function searchLibrary(query: string, o: SearchOptions = {}): Promi
   if (!words.length) return { items: pool.slice(offset, offset + limit), total: pool.length, unknown: [] };
 
   // Each query word becomes a group of alternatives; every group must match.
-  const groups: { ar: string[]; en: string[] }[] = [];
+  const groups: { ar: string[]; en: string[]; prefer?: string }[] = [];
   const translatedWords: string[] = [];
   const unknown: string[] = [];
   for (const w of words) {
@@ -111,14 +119,14 @@ export async function searchLibrary(query: string, o: SearchOptions = {}): Promi
       groups.push({ ar, en });
       if (en.length) translatedWords.push(en[0]);
       else unknown.push(w);
-    } else groups.push({ ar: [], en: [w] });
+    } else groups.push({ ar: [], en: EN_PREFER[w] ? [EN_PREFER[w], w] : [w], prefer: EN_PREFER[w] });
   }
   // Candidates from the word index (every group must match), instead of scanning every drawing.
   const inPool = (it: LibItem) => (o.cat == null || it.cat === o.cat) && (!o.style || lib.sets[it.set].style === o.style);
   const sets: Set<number>[] = groups.map((g) => {
     const c = new Set<number>();
     for (const e of g.en) for (const suf of ['', ...SUFFIXES]) for (const i of lib.enIdx.get(e + suf) ?? []) c.add(i);
-    for (const e of g.en) if (e.includes('-')) for (const i of lib.nameIdx.get(e) ?? []) c.add(i);
+    for (const e of g.en) for (const i of lib.nameIdx.get(e) ?? []) c.add(i);
     for (const a of g.ar) for (const i of lib.arIdx.get(a) ?? []) c.add(i);
     return c;
   });
@@ -131,11 +139,13 @@ export async function searchLibrary(query: string, o: SearchOptions = {}): Promi
     let total = 0;
     for (const g of groups) {
       let s = scoreArabic(it, g.ar);
-      for (const e of g.en) s = Math.max(s, e.includes('-') ? (it.name === e ? 4 : 0) : scoreEnglish(it, e));
+      // A curated drawing name (hyphenated in the glossary, or from EN_PREFER) is an exact pick: 4.
+      for (const e of g.en) s = Math.max(s, it.name === g.prefer || (e.includes('-') && it.name === e) ? 4 : e.includes('-') ? 0 : scoreEnglish(it, e));
       if (!s) { total = -1; break; }
       total += s;
     }
-    if (total > 0) scored.push({ it, s: total - it.name.split('-').length * 0.05 });
+    const negative = NEGATIVE.test(it.name) && !words.some((w) => w === 'no' || w === 'not' || w === 'non' || w === 'لا' || w === 'ممنوع');
+    if (total > 0) scored.push({ it, s: total - it.name.split('-').length * 0.05 - (negative ? 1.5 : 0) });
   }
   scored.sort((a, b) => b.s - a.s || a.it.set - b.it.set);
   return {

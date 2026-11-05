@@ -42,4 +42,17 @@ describe('on-device storage', () => {
     expect((imported.elements[0] as ImageElement).src).toBe(ref);
     await expect(importProjectFile(new Blob(['{"hello":1}']), () => 'x')).rejects.toThrow(/not a Khatt project/);
   });
+
+  it("carries every scene's voice recording, and keeps generated music as its recipe", async () => {
+    const voice = await putAsset(new Blob([new Uint8Array([1, 2, 3, 4, 5])], { type: 'audio/webm' }));
+    const p = newProject('قصة');
+    p.scenes[0].voice = { src: voice, name: 'تسجيل', duration: 3, volume: 1 };
+    p.audio = { src: 'music:story', name: 'حكاية', duration: 0, volume: 0.35 };
+    const data = JSON.parse(await (await exportProjectFile(p)).text());
+    expect(Object.keys(data.assets)).toContain(voice);
+    expect(data.assets['music:story']).toBeUndefined();
+    const imported = await importProjectFile(new Blob([JSON.stringify(data)]), () => 'copy');
+    expect(imported.scenes[0].voice?.src).toBe(voice);
+    expect(imported.audio?.src).toBe('music:story');
+  });
 });

@@ -1,10 +1,10 @@
 import './styles.css';
-import { newProject, frameOf, type Camera, type Project } from '../engine/types';
+import { newProject, frameOf, FRAMES, type Camera, type Project } from '../engine/types';
 import { renderFrame, boundsOf, viewMatrix, elementSize } from '../engine/render';
 import { schedule, fullView, zoomLimits, activeIndex, autoCamera } from '../engine/timeline';
 import { sceneSpans } from '../engine/scenes';
 import { prepareAll } from '../engine/prepare';
-import { exportVideo } from '../engine/export';
+import { exportVideo, renderMix } from '../engine/export';
 import { getProject, listProjects } from '../storage/db';
 import { state, ui, commit, undo, redo, loadProject, findEl, removeEl, isPhone, addScene } from './app';
 import { startPlayback, stopPlayback, playbackTime, unlockAudio } from './sound';
@@ -455,7 +455,16 @@ async function boot() {
   registerServiceWorker();
   // Hook for automated tests.
   (window as unknown as { khatt: unknown }).khatt = {
-    state, play, stop, commit, exportVideo, elementSize, setSheet, schedule: () => schedule(state.project),
+    state, play, stop, commit, exportVideo, renderMix, elementSize, setSheet, schedule: () => schedule(state.project),
+    /** One video frame exactly as export draws it, as a PNG data URL. */
+    frameAt: async (time: number, short = 540) => {
+      await prepareAll(state.project.elements);
+      const f = FRAMES[state.project.aspect], k = short / Math.min(f.w, f.h);
+      const c = document.createElement('canvas');
+      c.width = Math.round(f.w * k); c.height = Math.round(f.h * k);
+      renderFrame(c.getContext('2d')!, state.project, time, { customHand: state.customHand });
+      return c.toDataURL('image/png');
+    },
     seek: (time: number) => { const was = state.playing; state.time = time; state.playing = true; draw(); state.playing = was; },
   };
 }

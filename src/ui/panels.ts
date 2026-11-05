@@ -1,6 +1,6 @@
 // The "Add" panel: bundled drawings, open-image search, text, own photos, sound.
-import { state, ui, commit, softCommit, afterLoad, addSvg, addImageBlob, addImageUrl, addText } from './app';
-import { startRecording, blobDuration, unlockAudio, type Recording } from './sound';
+import { state, ui, commit, softCommit, afterLoad, addSvg, addImageBlob, addImageUrl, addText, addChart } from './app';
+import { startRecording, blobDuration, unlockAudio, previewClip, type Recording } from './sound';
 import { openSceneRecorder } from './recorder';
 import { h, field, num, range, select, add } from './dom';
 import { t, getLang, type Key } from './i18n';
@@ -12,13 +12,16 @@ import { putAsset } from '../storage/db';
 import { loadLibrary, searchLibrary, drawingSvg, itemLabel, type LibItem, type LibStyle } from '../library/builtin';
 import { searchOpenverse, searchCommons, searchPixabay, searchUnsplash, searchPexels, downloadHit, OnlineError, type OnlineHit, type Provider } from '../library/online';
 import { appConfig } from '../config';
+import { boardInk } from '../engine/board';
+import { newChartSpec, type ChartKind } from '../engine/chart';
+import { MUSIC_STYLES, MUSIC_VOLUME, musicSrc, musicStyleOf, type MusicStyle } from '../engine/music';
 
 const onlineMessage = (err: unknown) => err instanceof OnlineError
   ? t(({ blocked: 'errBlocked', offline: 'errOffline', rate: 'errRate', server: 'errServer' } as const)[err.kind])
   : `${t('error')}: ${(err as Error).message}`;
 
 export function renderTabs() {
-  const tabs: [typeof state.tab, Key][] = [['icons', 'icons'], ['online', 'online'], ['text', 'text'], ['upload', 'upload'], ['audio', 'audio']];
+  const tabs: [typeof state.tab, Key][] = [['icons', 'icons'], ['online', 'online'], ['text', 'text'], ['chart', 'chart'], ['upload', 'upload'], ['audio', 'audio']];
   document.getElementById('tabs')!.replaceChildren(...tabs.map(([id, k]) => h('button', {
     class: state.tab === id ? 'tab active' : 'tab', 'aria-pressed': String(state.tab === id),
     onclick: () => { state.tab = id; renderTabs(); },
@@ -32,6 +35,7 @@ export function renderTabs() {
   if (state.tab === 'icons') drawingsTab(body);
   if (state.tab === 'online') onlineTab(body);
   if (state.tab === 'text') textTab(body);
+  if (state.tab === 'chart') chartTab(body);
   if (state.tab === 'upload') uploadTab(body);
   if (state.tab === 'audio') audioTab(body);
 }
@@ -230,7 +234,7 @@ function onlineTab(body: HTMLElement) {
 
 // ---------------- text ----------------
 function textTab(body: HTMLElement) {
-  let font: FontId = 'amiri', size = 96, color = '#1f1f1f';
+  let font: FontId = 'amiri', size = 96, color = boardInk(state.project);
   const ta = h('textarea', { dir: 'auto', rows: 4, placeholder: 'اكتب هنا… / Type here…' }) as HTMLTextAreaElement;
   add(body,
     ta,
@@ -239,6 +243,17 @@ function textTab(body: HTMLElement) {
       field(t('size'), num(size, (v) => (size = v), { min: 8, max: 600, step: 1 })),
       field(t('colour'), h('input', { type: 'color', value: color, oninput: (e: Event) => (color = (e.target as HTMLInputElement).value) }))),
     h('button', { class: 'primary wide', onclick: () => { if (ta.value.trim()) addText(ta.value, font, size, color); } }, t('addText')),
+  );
+}
+
+// ---------------- charts ----------------
+function chartTab(body: HTMLElement) {
+  const kinds: [ChartKind, string, string][] = [['bar', '📊', t('chartBar')], ['line', '📈', t('chartLine')], ['pie', '◔', t('chartPie')]];
+  add(body,
+    h('div', { class: 'note' }, t('chartHint')),
+    h('div', { class: 'chart-kinds' }, kinds.map(([k, icon, label]) => h('button', {
+      class: 'chart-kind', onclick: async () => { await addChart(newChartSpec(k, getLang() === 'ar')); ui.openSheet('edit'); },
+    }, h('span', { class: 'big', 'aria-hidden': 'true' }, icon), label))),
   );
 }
 
@@ -293,12 +308,56 @@ function audioTab(body: HTMLElement) {
       h('div', {}, `🎙 ${t('perSceneHint')}`),
       h('button', { class: 'primary wide', onclick: () => { ui.closeSheetOnPhone(); openSceneRecorder(state.project.scenes[0].id, true); } }, t('recordAll'))),
     h('h3', {}, t('backgroundMusic')),
-    recording ? h('div', { class: 'note recording' }, t('recording')) : a ? h('div', { class: 'note' }, `${a.name} — ${a.duration.toFixed(1)}s`) : h('div', { class: 'note' }, t('noAudio')),
-    input, h('div', { class: 'row' }, h('label', { for: 'audio-input', class: 'button wide' }, t('chooseAudio')), rec),
+    recording ? h('div', { class: 'note recording' }, t('recording'))
+      : a ? h('div', { class: 'note' }, musicStyleOf(a.src) ? `♪ ${a.name} — ${t('musicWhole')}` : `${a.name} — ${a.duration.toFixed(1)}s`)
+      : h('div', { class: 'note' }, t('noAudio')),
     a && field(t('volume'), range(a.volume, (v) => { a.volume = v; softCommit(); }, 0, 1, 0.05)),
-    a && h('button', { class: 'primary wide', onclick: () => { state.project = fitToDuration(state.project, a.duration); commit(); } }, t('fitAudio')),
+    h('h4', {}, t('readyMusic')),
+    musicPicker(),
+    h('h4', {}, t('ownAudio')),
+    input, h('div', { class: 'row' }, h('label', { for: 'audio-input', class: 'button wide' }, t('chooseAudio')), rec),
+    a && !musicStyleOf(a.src) && h('button', { class: 'primary wide', onclick: () => { state.project = fitToDuration(state.project, a.duration); commit(); } }, t('fitAudio')),
     a && h('button', { class: 'wide', onclick: () => { state.project.audio = null; afterLoad(); commit(); renderTabs(); } }, t('remove')),
   );
+}
+
+// Original tracks made on the device (see engine/music.ts): listen, then use.
+let preview: { style: MusicStyle; stop: () => void } | null = null;
+function musicPicker(): HTMLElement {
+  const a = state.project.audio;
+  const current = a ? musicStyleOf(a.src) : null;
+  const stopPreview = () => { preview?.stop(); preview = null; };
+  return h('div', { class: 'music-list' }, MUSIC_STYLES.map((style) => {
+    const label = t(`music_${style}` as Key);
+    const playing = preview?.style === style;
+    return h('div', { class: current === style ? 'music-row active' : 'music-row' },
+      h('button', {
+        class: 'icon', 'aria-label': `${playing ? t('stop') : t('listen')} ${label}`,
+        onclick: async () => {
+          unlockAudio();
+          const was = preview?.style;
+          stopPreview();
+          if (was === style) { renderTabs(); return; }
+          const slow = setTimeout(() => toast(t('musicMaking'), 'info', 2500), 400);
+          try {
+            const stop = await previewClip(musicSrc(style), Math.min(1, MUSIC_VOLUME * 2.2), () => { if (preview?.style === style) { preview = null; renderTabs(); } });
+            preview = { style, stop };
+          } catch (err) { toast(`${t('error')}: ${(err as Error).message}`, 'error'); }
+          clearTimeout(slow);
+          renderTabs();
+        },
+      }, playing ? '■' : '▶'),
+      h('div', { class: 'grow' }, h('strong', {}, label), h('small', {}, t(`music_${style}_hint` as Key))),
+      h('button', {
+        class: 'toggle', 'aria-pressed': String(current === style),
+        onclick: () => {
+          stopPreview();
+          state.project.audio = { src: musicSrc(style), name: label, duration: 0, volume: MUSIC_VOLUME };
+          afterLoad(); commit(); renderTabs();
+          toast(t('musicSet'), 'ok', 2500);
+        },
+      }, current === style ? `✓ ${t('inUse')}` : t('use')));
+  }));
 }
 
 async function setAudio(blob: Blob, name: string) {

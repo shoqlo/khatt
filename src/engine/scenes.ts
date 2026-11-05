@@ -3,6 +3,7 @@
 // elements of a scene are always kept next to each other.
 import { newScene, FRAMES, type AudioTrack, type BoardElement, type Project, type Scene } from './types';
 import { schedule, type Schedule } from './timeline';
+import { isMusicSrc } from './music';
 
 /** Bring any project (including ones saved before scenes existed) into a consistent shape. Mutates and returns p. */
 export function normalizeProject(p: Project): Project {
@@ -86,7 +87,8 @@ export interface AudioClip { src: string; start: number; volume: number; duratio
 /** Every sound in the video and when it starts: the background track at 0, each scene's voice when its scene begins. */
 export function audioClips(p: Project, s: Schedule = schedule(p)): AudioClip[] {
   const clips: AudioClip[] = [];
-  if (p.audio) clips.push({ src: p.audio.src, start: 0, volume: p.audio.volume, duration: p.audio.duration, kind: 'background' });
+  // Generated music has no fixed length: it plays for the whole video.
+  if (p.audio) clips.push({ src: p.audio.src, start: 0, volume: p.audio.volume, duration: isMusicSrc(p.audio.src) ? s.total : p.audio.duration, kind: 'background' });
   for (const span of sceneSpans(p, s)) {
     const v: AudioTrack | null = span.scene.voice;
     if (v && span.first >= 0) clips.push({ src: v.src, start: span.start, volume: v.volume, duration: v.duration, kind: 'scene', sceneId: span.scene.id });

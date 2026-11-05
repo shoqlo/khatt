@@ -5,6 +5,8 @@ import type { Project } from '../engine/types';
 import { audioClips } from '../engine/scenes';
 import { schedule } from '../engine/timeline';
 import { resolveUrl } from '../storage/db';
+import { musicLoop, musicStyleOf } from '../engine/music';
+import { duckPoints, scheduleClip } from '../engine/mixer';
 
 type AC = typeof AudioContext;
 let ctx: AudioContext | null = null;
@@ -25,6 +27,8 @@ export function unlockAudio() {
 
 const buffers = new Map<string, Promise<AudioBuffer>>();
 export function loadBuffer(src: string): Promise<AudioBuffer> {
+  const style = musicStyleOf(src);
+  if (style) return musicLoop(style); // generated on the device, cached per style
   let p = buffers.get(src);
   if (!p) {
     p = (async () => {
@@ -52,22 +56,18 @@ let session: { sources: AudioBufferSourceNode[]; ctxStart: number; t0: number } 
 /** Start every clip that is still audible at time t0. Returns false if there is no sound. */
 export async function startPlayback(p: Project, t0: number): Promise<boolean> {
   stopPlayback();
-  const clips = audioClips(p, schedule(p)).filter((c) => c.start + c.duration > t0);
+  const all = audioClips(p, schedule(p));
+  const clips = all.filter((c) => c.start + c.duration > t0);
   if (!clips.length) return false;
   const c = audioContext();
   const loaded = await Promise.all(clips.map(async (clip) => ({ clip, buf: await loadBuffer(clip.src).catch(() => null) })));
   const ctxStart = c.currentTime + 0.05;
+  const duck = duckPoints(all);
   const sources: AudioBufferSourceNode[] = [];
   for (const { clip, buf } of loaded) {
     if (!buf) continue;
-    const node = c.createBufferSource();
-    node.buffer = buf;
-    const gain = c.createGain();
-    gain.gain.value = clip.volume;
-    node.connect(gain).connect(c.destination);
-    const offset = Math.max(0, t0 - clip.start);
-    node.start(ctxStart + Math.max(0, clip.start - t0), offset);
-    sources.push(node);
+    const node = scheduleClip(c, buf, clip, t0, ctxStart, duck);
+    if (node) sources.push(node);
   }
   session = { sources, ctxStart, t0 };
   return sources.length > 0;

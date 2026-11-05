@@ -24,6 +24,7 @@ button:focus-visible, .button:focus-visible, input:focus-visible { outline: 2px 
 .danger { color: var(--danger); }
 .wide { width: 100%; }
 button:disabled { opacity: .45; cursor: default; }
+button.toggle[aria-pressed="true"] { background: var(--sel); border-color: var(--accent); color: var(--ink); font-weight: 600; }
 button.icon { min-width: 36px; padding: 6px; font-size: 18px; }
 input, select, textarea { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 7px 9px; width: 100%; min-height: 36px; }
 input[type=checkbox] { width: 20px; height: 20px; min-height: 0; }
@@ -46,6 +47,19 @@ main { display: grid; grid-template-columns: 320px 1fr 290px; min-height: 0; }
 #tabs { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 10px; }
 .tab { padding: 6px 10px; font-size: 14px; }
 .tab.active { background: var(--ink); color: var(--panel); border-color: var(--ink); }
+.music-list { display: grid; gap: 6px; }
+.music-row { display: flex; gap: 8px; align-items: center; border: 1px solid var(--line); border-radius: 10px; padding: 6px 8px; }
+.music-row.active { border-color: var(--accent); background: var(--sel); }
+.music-row .grow { flex: 1; min-width: 0; display: grid; }
+.music-row small { color: var(--muted); }
+.chart-kinds { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 10px; }
+.chart-kind { flex-direction: column; min-height: 96px; font-size: 14px; }
+.chart-kind .big { font-size: 34px; line-height: 1; }
+.chart-editor { display: grid; gap: 8px; border: 1px solid var(--line); border-radius: 10px; padding: 10px; }
+.chart-editor h4 { margin: 0; }
+.chart-rows { display: grid; gap: 6px; }
+.chart-row { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr) 36px; gap: 6px; align-items: center; }
+.chart-row.head { font-size: 12px; color: var(--muted); }
 #library > * + * { margin-top: 8px; }
 .chips { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 4px; scrollbar-width: thin; }
 .chip { flex: 0 0 auto; border-radius: 999px; padding: 4px 12px; min-height: 32px; font-size: 13px; }
