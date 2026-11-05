@@ -113,3 +113,13 @@ describe('Unsplash and Pexels through the same middleman', () => {
     expect((await res.json()).error).toMatch(/pexels/);
   });
 });
+
+describe('when a picture service cannot be reached', () => {
+  it('answers with a clear error the app can show (and the app is still allowed to read it)', async () => {
+    globalThis.fetch = (async () => { throw new TypeError('network down'); }) as typeof fetch;
+    const r = await get('/pixabay/search?q=cat', 'https://shoqlo.github.io');
+    expect(r.status).toBe(502);
+    expect(r.headers.get('Access-Control-Allow-Origin')).toBe('https://shoqlo.github.io');
+    expect((await r.json()).error).toMatch(/could not be reached/);
+  });
+});

@@ -6,6 +6,9 @@ This is an original implementation. It contains no VideoScribe code, artwork, im
 
 **To put it online or on customers' phones, see [DEPLOY.md](DEPLOY.md).**
 
+Optional picture middleman (Pixabay, Unsplash, Pexels; keeps your API keys private):
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/shoqlo/khatt/tree/main/cloudflare)
+
 ## Features
 
 | | |

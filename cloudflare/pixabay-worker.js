@@ -192,7 +192,13 @@ export default {
     if (!route) return json({ error: 'not found' }, 404, headers);
     const [service, run] = route;
     if (!services[service]) return json({ error: `The ${service} key is not set on this worker.` }, 503, headers);
-    const res = await run();
+    let res;
+    try {
+      res = await run();
+    } catch {
+      // The service could not be reached (network trouble): answer clearly instead of crashing.
+      return json({ error: `${service} could not be reached. Try again in a moment.` }, 502, headers);
+    }
     if (res.status === 429) return json({ error: 'busy' }, 429, headers);
     if (res.status === 400 || res.status === 404) return json({ error: await res.text() }, res.status, headers);
     if (!res.ok) return json({ error: `${service} answered ${res.status}` }, 502, headers);

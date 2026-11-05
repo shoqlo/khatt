@@ -1,0 +1,12 @@
+// Cloudflare Worker settings for the Khatt picture middleman.
+// Used by the "Deploy to Cloudflare" button (see DEPLOY.md) and by `npx wrangler deploy`.
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "khatt-pixabay",
+  "main": "pixabay-worker.js",
+  "compatibility_date": "2026-09-01",
+  // Only this website may use the middleman from a browser. Add more sites separated by commas.
+  "vars": { "ALLOWED_ORIGINS": "https://shoqlo.github.io" },
+  "workers_dev": true,
+  "observability": { "enabled": true }
+}

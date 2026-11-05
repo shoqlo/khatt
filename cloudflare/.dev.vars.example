@@ -1,0 +1,6 @@
+# The "Deploy to Cloudflare" button asks for every value below that is not commented out.
+# Your Pixabay API key: log in at pixabay.com, open https://pixabay.com/api/docs/ and copy the key shown next to "key".
+PIXABAY_KEY=
+# Optional, add later in the Cloudflare dashboard (Worker → Settings → Variables and Secrets):
+# UNSPLASH_ACCESS_KEY=
+# PEXELS_API_KEY=

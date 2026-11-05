@@ -1,0 +1,22 @@
+{
+  "name": "khatt-pixabay",
+  "private": true,
+  "description": "Khatt picture middleman: keeps Pixabay/Unsplash/Pexels API keys off the public website",
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "check": "wrangler deploy --dry-run --outdir .wrangler-check"
+  },
+  "devDependencies": {
+    "wrangler": "4.147.0"
+  },
+  "cloudflare": {
+    "bindings": {
+      "PIXABAY_KEY": {
+        "description": "Your Pixabay API key. Log in at pixabay.com, open pixabay.com/api/docs and copy the key shown next to “key”."
+      },
+      "ALLOWED_ORIGINS": {
+        "description": "The website allowed to use this middleman (your Khatt app address)."
+      }
+    }
+  }
+}

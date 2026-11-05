@@ -49,7 +49,16 @@ All three services need an API key from **your** accounts. The app is a public w
 | **Unsplash** (photos) | Log in at <https://unsplash.com/oauth/applications> → **New Application**, accept the API guidelines, name it "Khatt" | the **Access Key** (never the Secret key) | New apps start in "demo" mode with a low hourly limit. Ask for production access from the same page when ready. Unsplash checks that the app credits photographers, uses Unsplash's own photo links and reports when a photo is used, and Khatt does all three. Because of that rule, Unsplash photos need internet to display. |
 | **Pexels** (photos) | Log in, then open <https://www.pexels.com/api/> → **Your API Key** | the key | 200 searches an hour and 20,000 a month by default. Pexels gives unlimited use for free if you email api@pexels.com showing your credits. |
 
-**Step 2: the middleman on Cloudflare**
+**Step 2: the middleman on Cloudflare: the quick way (one button)**
+
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/shoqlo/khatt/tree/main/cloudflare)
+
+1. Tap the button above, or open <https://deploy.workers.cloudflare.com/?url=https://github.com/shoqlo/khatt/tree/main/cloudflare>.
+2. Sign up or log in to Cloudflare (free). If it asks, connect your GitHub account; Cloudflare keeps its own copy of the middleman's code there.
+3. Paste your Pixabay key into **PIXABAY_KEY**. Your site address is already filled in. Then tap **Create and deploy**.
+4. When it finishes, it shows the worker's link (`https://khatt-pixabay.YOURNAME.workers.dev`). Add Unsplash or Pexels keys later under the worker's **Settings → Variables and Secrets**.
+
+**Step 2 (alternative): by hand**
 1. Create a free account at <https://dash.cloudflare.com/sign-up>.
 2. Go to **Workers & Pages → Create → Worker**, name it `khatt-pixabay` (any name works), then click **Deploy**.
 3. Click **Edit code**. Replace everything with [`cloudflare/pixabay-worker.js`](https://raw.githubusercontent.com/shoqlo/khatt/main/cloudflare/pixabay-worker.js) and click **Deploy**.
